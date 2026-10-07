@@ -225,6 +225,10 @@ def probe_image(path):
     return fields
 
 
+class NoVisualStream(Exception):
+    """Media file with no picture (audio-only .mp4/.mov). Not a failure: nothing visual to index."""
+
+
 # ---- videos: ffprobe
 def ffprobe_json(path):
     if not shutil.which("ffprobe"):
@@ -241,7 +245,7 @@ def probe_ffprobe(path, media_type):
     info = ffprobe_json(path)
     v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
     if not v:
-        raise RuntimeError("no video stream found")
+        raise NoVisualStream("audio-only file (no video stream)")
     fields = {"has_audio": int(any(s.get("codec_type") == "audio" for s in info["streams"]))}
     w, h = v.get("width"), v.get("height")
     rot = 0
@@ -291,7 +295,7 @@ def probe_media(path, media_type):
         f = probe_ffprobe(path, "image")
         if f.get("width"):
             return f
-    except RuntimeError:
+    except (RuntimeError, NoVisualStream):
         pass
     ext = os.path.splitext(path)[1].lower()
     if ext in (".heic", ".heif") and not heic_supported():
@@ -598,6 +602,15 @@ def index_file(con, known, p, ext, st, lib, stats, thumbs):
                 if tp:
                     stats["thumbnails_created"] += 1
                     con.execute("UPDATE assets SET thumb_path=? WHERE asset_id=?", (tp, aid))
+    except NoVisualStream as e:
+        stats["skipped"] += 1
+        msg = str(e)
+        if old:
+            con.execute("UPDATE assets SET status='skipped', error=?, availability='local', size=?, mtime=? "
+                        "WHERE asset_id=?", (msg, st.st_size, st.st_mtime, old["asset_id"]))
+        else:
+            f = dict(base, file_path=p, status="skipped", error=msg, availability="local")
+            con.execute(f"INSERT INTO assets({','.join(f)}) VALUES ({','.join('?' * len(f))})", tuple(f.values()))
     except Exception as e:
         stats["errors"] += 1
         stats["error_reasons"][str(e)[:90]] += 1
@@ -639,7 +652,7 @@ def cmd_scan(a):
         entries = pick_test_sample(entries, a.sample)
     known = {os.path.normcase(r["file_path"]): r for r in con.execute("SELECT * FROM assets")}
     stats = dict(found=len(entries), local=0, cloud_only=0, new=0, changed=0, now_available=0, moved=0,
-                 unchanged=0, errors=0, thumbnails_created=0, error_reasons=Counter())
+                 unchanged=0, errors=0, skipped=0, thumbnails_created=0, error_reasons=Counter())
     seen = set()
     for i, (p, ext, st) in enumerate(entries, 1):
         seen.add(os.path.normcase(p))
@@ -688,13 +701,15 @@ def test_report(con, stats, whole, problems, sources, marker, secs):
     ori = Counter(r[0] for r in con.execute(f"SELECT orientation FROM assets WHERE {idx} AND orientation IS NOT NULL"))
     yrs = sorted({(r[0] or "")[:4] for r in con.execute(f"SELECT date_created FROM assets WHERE {idx}") if r[0]})
     sz = con.execute(f"SELECT MIN(size),MAX(size) FROM assets WHERE {idx}").fetchone()
-    local = stats["local"]
+    local = stats["local"] - stats["skipped"]
     print("PRESKI LIBRARY SCAN TEST (sample only; nothing deleted/moved/modified)")
     print(f"TOTAL FOUND:              {stats['found']}   (whole source folder(s): {whole['found']}, of which cloud-only {whole['cloud']})")
     print(f"LOCALLY AVAILABLE:        {local}")
     print(f"CLOUD ONLY:               {stats['cloud_only']}   <- CLOUD_ONLY / NOT_DOWNLOADED, not indexed, never opened")
     print(f"SUCCESSFULLY INDEXED:     {indexed}")
     print(f"FAILED:                   {stats['errors']}")
+    if stats["skipped"]:
+        print(f"SKIPPED (audio-only):     {stats['skipped']}   <- no picture to index; not a failure")
     print(f"THUMBNAILS CREATED:       {stats['thumbnails_created']}")
     print(f"METADATA EXTRACTED:       {meta}")
     print(f"CAPTURE DATES FOUND:      {dates}   (from EXIF/QuickTime; {indexed - dates} fell back to file time)")
@@ -722,7 +737,7 @@ def test_report(con, stats, whole, problems, sources, marker, secs):
     elif stats["errors"]:
         warns.append(f"{stats['errors']} file(s) failed (rare corrupt/incomplete files are tolerated; they are listed in `report`)")
     by_fmt = defaultdict(lambda: [0, 0])                    # ext group -> [ok, failed]
-    for r in con.execute("SELECT file_name,status FROM assets WHERE availability='local'"):
+    for r in con.execute("SELECT file_name,status FROM assets WHERE availability='local' AND status!='skipped'"):
         g = by_fmt[ext_group(os.path.splitext(r[0])[1].lower())]
         g[0 if r[1] in ("probed", "analysed") else 1] += 1
     for g, (ok_n, bad_n) in by_fmt.items():
@@ -1188,7 +1203,8 @@ def cmd_report(a):
     st = {r["status"]: r["c"] for r in con.execute("SELECT status,COUNT(*) c FROM assets GROUP BY status")}
     print("\nINDEX STATUS")
     print(f"  analysed {st.get('analysed', 0)} | awaiting analysis {st.get('probed', 0)} | "
-          f"cloud-only {st.get('cloud_only', 0)} | missing from disk {st.get('missing', 0)} | errors {st.get('error', 0)}")
+          f"cloud-only {st.get('cloud_only', 0)} | skipped audio-only {st.get('skipped', 0)} | "
+          f"missing from disk {st.get('missing', 0)} | errors {st.get('error', 0)}")
     ds = Counter(r[0] or "none" for r in con.execute(f"SELECT date_source FROM assets WHERE {live}"))
     print(f"  capture date source: {dict(ds)}  (file_time = no metadata date, less reliable for sessions)")
     lp = one("SELECT COUNT(*) FROM assets WHERE extra LIKE '%live_photo_pair%'")
