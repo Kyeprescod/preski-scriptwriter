@@ -29,6 +29,13 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `mark-used <project> <ids...>` | usage_count / last_used so footage can be rotated |
 | `sessions`, `dupes`, `status`, `report` | inspection and the final report |
 
+## Mac / iCloud setup
+`bash .claude/skills/content-library-intelligence/scripts/setup_mac.sh [folder...]` runs init + scan + report. With no argument it scans `~/Pictures/*.photoslibrary/originals` (the real files; thumbnails/derivatives are skipped). Notes to relay to Kye:
+- Photos app: Settings > iCloud > **Download Originals to this Mac**, or files are `.icloud` stubs. The scan counts these as `icloud_not_downloaded` and does not index them; tell him the number.
+- Terminal needs Full Disk Access to read the Photos library.
+- Capture dates come from QuickTime/EXIF (via ffprobe / macOS `sips`), not file timestamps, so sessions group correctly. Needs `brew install ffmpeg`.
+- Windows iCloud Photos: `python3 clil.py scan "%USERPROFILE%\Pictures\iCloud Photos\Photos"`.
+
 ## Workflow
 
 ### 1. Index (cheap, automatic)

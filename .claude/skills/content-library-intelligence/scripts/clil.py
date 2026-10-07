@@ -15,6 +15,8 @@ from pathlib import Path
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".3gp"}
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tiff", ".dng"}
 SESSION_GAP_S = 45 * 60
+SKIP_DIRS = {"derivatives", "resources", "thumbnails", ".thumbnails", "database", "private", "scopes",
+             ".git", "node_modules", "@eadir"}   # Photos-library internals / thumbnail caches
 HERE = Path(__file__).resolve().parent
 TAXONOMY = json.loads((HERE.parent / "references" / "taxonomy.json").read_text())
 
@@ -140,11 +142,27 @@ def probe_fields(path, media_type):
     if dur and media_type == "video":
         fields["duration"] = round(float(dur), 2)
     tags = {k.lower(): val for k, val in info.get("format", {}).get("tags", {}).items()}
-    if tags.get("creation_time"):
-        fields["date_created"] = tags["creation_time"]
+    qt = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")   # iPhone: local time + offset
+    if qt:
+        fields["date_created"] = qt
     if tags.get("location"):
         fields["location"] = tags["location"]
     return fields
+
+
+def capture_date(path, media_type, probed):
+    """Real capture time. Prefer QuickTime/EXIF over file timestamps (iCloud/Photos stamps import time)."""
+    if probed:
+        return probed
+    if media_type == "image" and shutil.which("sips"):     # macOS: reads EXIF, handles HEIC
+        try:
+            out = subprocess.run(["sips", "-g", "creation", str(path)], capture_output=True, text=True, timeout=30).stdout
+            m = re.search(r"creation:\s*(\d{4}):(\d\d):(\d\d) (\d\d:\d\d:\d\d)", out)
+            if m:
+                return f"{m[1]}-{m[2]}-{m[3]}T{m[4]}"
+        except Exception:
+            pass
+    return None
 
 
 def sync_fts(con, asset_id):
@@ -170,11 +188,15 @@ def cmd_scan(a):
     """Incremental: only new/changed files are hashed and probed. Rows are never deleted."""
     con = connect(a, create=True)
     known = {r["file_path"]: r for r in con.execute("SELECT * FROM assets")}
-    seen, stats = set(), dict(scanned=0, new=0, changed=0, moved=0, unchanged=0, errors=0)
+    seen, stats = set(), dict(scanned=0, new=0, changed=0, moved=0, unchanged=0, errors=0, icloud_not_downloaded=0)
     t0 = time.time()
     for src in a.sources:
-        for root, _, files in os.walk(Path(src).expanduser()):
+        for root, dirs, files in os.walk(Path(src).expanduser()):
+            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS]
             for fn in files:
+                if fn.startswith(".") and fn.endswith(".icloud"):    # iCloud placeholder: bytes not on disk
+                    stats["icloud_not_downloaded"] += 1
+                    continue
                 ext = Path(fn).suffix.lower()
                 if ext not in VIDEO_EXT | IMAGE_EXT or fn.startswith("."):
                     continue
@@ -195,6 +217,7 @@ def cmd_scan(a):
                                   quick_hash=qh, date_modified=iso(st.st_mtime), indexed_at=now(),
                                   date_created=iso(getattr(st, "st_birthtime", st.st_mtime)))
                     fields.update(probe_fields(p, mt))
+                    fields["date_created"] = capture_date(p, mt, fields.get("date_created")) or fields["date_created"]
                     if old:   # file changed in place: keep id, drop stale analysis flag
                         fields["status"] = "probed"
                         sets = ",".join(f"{k}=?" for k in fields)
@@ -274,7 +297,7 @@ def assign_sessions(con):
 
 def contact_sheet(lib, r):
     out = lib / "contact_sheets" / f"{r['asset_id']}.jpg"
-    if out.exists() or not shutil.which("ffmpeg"):
+    if out.exists() or not (shutil.which("ffmpeg") or shutil.which("sips")):
         return str(out) if out.exists() else None
     if r["media_type"] == "video":
         d = max(r["duration"] or 1, 1)
@@ -283,7 +306,11 @@ def contact_sheet(lib, r):
     else:
         cmd = ["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", "scale=720:-2", "-frames:v", "1", str(out)]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=120)
+        if shutil.which("ffmpeg"):
+            subprocess.run(cmd, capture_output=True, timeout=120)
+        if not out.exists() and r["media_type"] == "image" and shutil.which("sips"):   # HEIC on macOS
+            subprocess.run(["sips", "-s", "format", "jpeg", "-Z", "720", r["file_path"], "--out", str(out)],
+                           capture_output=True, timeout=60)
     except Exception:
         return None
     return str(out) if out.exists() else None
