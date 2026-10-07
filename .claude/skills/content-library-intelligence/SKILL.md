@@ -27,6 +27,7 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `fetch "<topic>" [--limit N --dry-run --reserve-gb G]` / `fetch --ids ...` | **Windows.** Search tagged footage and download only the matching clips that are cloud-only (same as right-click *Always keep on this device*), with a disk-space guard (default keeps 60 GB spare). Prints the ready-to-use paths |
 | `download --since D --until D [--type video] [--limit N] [--dry-run]` | Pull a batch of *untagged* cloud-only clips by file date so they can be scanned then tagged |
 | `harvest [--type video --since D --min-mb N --max-mb N --under <folder> --limit N --dry-run]` | **Windows. Preferred way to handle cloud-only footage.** Streams clips one at a time: download, read real metadata + save thumbnail strip, free the space again. Disk use stays ~one clip; cost is bandwidth/time, so it can run unattended. Harvested clips are then taggable from saved thumbnails (`pending`) without being on the PC |
+| `collect "<topic>" [--name N --limit N --min-score S --free-after --dry-run]` / `--session S` / `--ids ...` | Copy the best tagged clips for a topic into one folder with `manifest.csv/json` (rank, score, description, session, original path). Cloud-only clips are downloaded first; `--free-after` releases them again. Copies only: originals are never moved or edited. Default folder: `<lib>\collections\<name>` |
 | `free --analysed --yes` / `free --ids ...` | Release disk space for clips already tagged (same as *Free up space*). Never deletes; iCloud keeps originals. Without `--yes` it only previews |
 | `pending --limit N [--session S]` | JSON of probed-but-unanalysed assets with a contact-sheet image path each |
 | `annotate <file.jsonl\|->` | upsert analysis (see below), updates search index |
@@ -34,6 +35,9 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `match-script <file\|->` | per-sentence ranked clips for a voiceover script (JSON) |
 | `mark-used <project> <ids...>` | usage_count / last_used so footage can be rotated |
 | `sessions`, `dupes`, `status`, `report` | inspection and the final report |
+
+## Tag and collect in one go (what Kye asks for)
+When Kye says "tag and collect" (or names a theme/video idea): (1) `pending` with sensible filters (type video, portrait, recent) -> read contact sheets -> `annotate` the batch; (2) immediately `collect "<theme>" --limit 15 --dry-run`, show the ranked list with why each was picked, and ask for a yes; (3) run `collect` without `--dry-run` (add `--free-after` if disk is tight); (4) report the folder path and call out gaps (themes with too few good clips, so he knows what to film). Never move or edit originals; collect only copies.
 
 ## Handling cloud-only footage without downloading it all (Windows)
 Kye should not need to keep thousands of videos on disk. Use `harvest` (stream: download -> thumbnails + metadata -> free) in batches, e.g. `harvest --type video --since 2025-06-01 --min-mb 5 --max-mb 300 --limit 100`, always `--dry-run` first and tell him the GB. Then tag from `pending` (it serves the saved thumbnail strips even though the file is cloud-only). Only `fetch "<topic>"` the winners when he is about to edit. Cost is bandwidth/time, not disk. Reading Windows' own cloud thumbnails instead was considered but is untested.

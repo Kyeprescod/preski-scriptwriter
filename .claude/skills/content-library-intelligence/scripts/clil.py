@@ -11,7 +11,7 @@ NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are 
 attributes and never opened (opening one would make iCloud download it). Everything generated lives
 in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: doctor detect folders prune init scan fetch download harvest free pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect folders prune init scan fetch download harvest collect free pending annotate sessions search match-script mark-used dupes report status
 """
 import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
 from collections import Counter, defaultdict
@@ -983,6 +983,95 @@ def cmd_harvest(a):
           f"audio-only skipped: {stats['skipped']}. Next: tag them with `pending`.")
 
 
+def slugify(text):
+    t = re.sub(r"[^A-Za-z0-9]+", "-", text or "").strip("-").lower()
+    return t[:50] or "collection"
+
+
+def cmd_collect(a):
+    """Gather the best tagged clips for a topic into one folder (COPIES; originals are never moved or changed).
+    Cloud-only clips are downloaded first, and optionally released again afterwards. Writes manifest.csv/json."""
+    con = connect(a)
+    why_by_id, score_by_id = {}, {}
+    if a.ids:
+        marks = ",".join("?" * len(a.ids))
+        rows = con.execute(f"SELECT * FROM assets WHERE asset_id IN ({marks})", a.ids).fetchall()
+    else:
+        if not a.query and not a.session:
+            sys.exit('Give a topic: collect "walking for fat loss"   (or --session S..., or --ids 12 40)')
+        if a.session:
+            rows = con.execute("SELECT * FROM assets WHERE session_id=? AND status='analysed' "
+                               "ORDER BY date_created", (a.session,)).fetchall()
+        else:
+            res = [x for x in run_search(con, a.query, a.limit, a.type) if x[0] >= a.min_score]
+            rows = [r for _, r, _ in res]
+            score_by_id = {r["asset_id"]: sc for sc, r, _ in res}
+            why_by_id = {r["asset_id"]: ", ".join(w) for _, r, w in res}
+    rows = rows[:a.limit]
+    if not rows:
+        n = con.execute("SELECT COUNT(*) FROM assets WHERE status='analysed'").fetchone()[0]
+        sys.exit(f"No tagged clips matched ({n} clips are tagged so far). Tag more with `pending`, "
+                 "or lower --min-score.")
+    name = slugify(a.name or a.query or a.session or "collection")
+    dest = Path(a.dest).expanduser() if a.dest else lib_dir(a) / "collections" / name
+    was_cloud = {r["asset_id"] for r in rows if r["availability"] == "cloud_only"}
+    size_gb = sum(r["size"] or 0 for r in rows) / 1e9
+    print(f"Collection '{name}': {len(rows)} clips ({size_gb:.1f} GB), {len(was_cloud)} need downloading.")
+    print(f"Copying into: {dest}")
+    if a.dry_run:
+        for r in rows[:20]:
+            sc = score_by_id.get(r["asset_id"])
+            print(f"  Clip {r['asset_id']}" + (f" ({sc}/10)" if sc else "") + f": {(r['description'] or r['file_name'])[:70]}"
+                  + ("  [cloud-only]" if r["asset_id"] in was_cloud else ""))
+        print("Dry run only: nothing was downloaded or copied.")
+        return
+    if size_gb * 1e9 > shutil.disk_usage(os.path.expanduser("~")).free - a.reserve_gb * 1e9:
+        sys.exit("Not enough free disk space to copy that many. Lower --limit or --reserve-gb.")
+    hydrate(con, rows, a)
+    dest.mkdir(parents=True, exist_ok=True)
+    manifest, copied, skipped = [], 0, []
+    for rank, r in enumerate(rows, 1):
+        src = r["file_path"]
+        try:
+            if is_cloud_only(os.stat(src)):
+                raise RuntimeError("still cloud-only (download did not finish)")
+            sc = score_by_id.get(r["asset_id"])
+            out = dest / f"{rank:02d}_{(f'{sc:04.1f}_' if sc else '')}{r['asset_id']}_{os.path.basename(src)}"
+            if not out.exists():
+                shutil.copy2(src, out)
+            copied += 1
+            manifest.append(dict(rank=rank, asset_id=r["asset_id"], score=sc, file=out.name,
+                                 description=r["description"], category=r["category"], activity=r["activity"],
+                                 exercise=r["exercise"], duration=r["duration"], orientation=r["orientation"],
+                                 captured=r["date_created"], session=r["session_id"], talking_head=r["talking_head"],
+                                 visual_quality=r["visual_quality_score"], content_potential=r["content_potential_score"],
+                                 why_matched=why_by_id.get(r["asset_id"]), original_path=src))
+        except Exception as e:
+            skipped.append((r["asset_id"], str(e)[:80]))
+    if manifest:
+        import csv
+        with open(dest / "manifest.csv", "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.DictWriter(f, fieldnames=list(manifest[0]))
+            w.writeheader()
+            w.writerows(manifest)
+        (dest / "manifest.json").write_text(json.dumps(manifest, indent=1, default=str), encoding="utf-8")
+    freed = 0
+    if a.free_after:
+        for r in rows:
+            if r["asset_id"] in was_cloud:
+                try:
+                    pin(r["file_path"], False)
+                    con.execute("UPDATE assets SET availability='cloud_only' WHERE asset_id=?", (r["asset_id"],))
+                    freed += 1
+                except Exception as e:
+                    print(f"  WARNING: could not free Clip {r['asset_id']}: {str(e)[:80]}", file=sys.stderr)
+        con.commit()
+    for aid, why in skipped:
+        print(f"  SKIPPED Clip {aid}: {why}")
+    print(f"\nCopied {copied}/{len(rows)} clips into {dest}" + (f"; released {freed} originals again." if freed else "."))
+    print("Open manifest.csv for scores, descriptions and original locations. Originals were not moved or changed.")
+
+
 def cmd_free(a):
     """Release disk space for clips already analysed. Never deletes: iCloud keeps the originals."""
     con = connect(a)
@@ -1401,6 +1490,15 @@ def main():
     s.add_argument("--under", help="only files whose path starts with this folder")
     s.add_argument("--reserve-gb", type=float, default=30); s.add_argument("--timeout", type=int, default=600)
     s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_harvest)
+    s = sub.add_parser("collect", help="copy the best tagged clips for a topic into one folder (+ manifest)")
+    s.add_argument("query", nargs="?"); s.add_argument("--ids", nargs="+", type=int)
+    s.add_argument("--session", help="collect a whole tagged session instead of searching")
+    s.add_argument("--name", help="folder name (default: from the topic)"); s.add_argument("--dest", help="full destination folder")
+    s.add_argument("--limit", type=int, default=15); s.add_argument("--min-score", type=float, default=0)
+    s.add_argument("--type", choices=["video", "image"])
+    s.add_argument("--free-after", action="store_true", help="release downloaded originals again after copying")
+    s.add_argument("--reserve-gb", type=float, default=30); s.add_argument("--timeout", type=int, default=900)
+    s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_collect)
     s = sub.add_parser("free", help="free disk space for clips that are already tagged (never deletes)")
     s.add_argument("--analysed", action="store_true"); s.add_argument("--ids", nargs="+", type=int)
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
