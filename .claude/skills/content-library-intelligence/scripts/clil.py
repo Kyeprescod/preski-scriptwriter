@@ -11,7 +11,7 @@ NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are 
 attributes and never opened (opening one would make iCloud download it). Everything generated lives
 in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: doctor detect folders prune init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect folders prune init scan fetch download harvest free pending annotate sessions search match-script mark-used dupes report status
 """
 import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
 from collections import Counter, defaultdict
@@ -536,7 +536,8 @@ def index_file(con, known, p, ext, st, lib, stats, thumbs):
             stats["cloud_only"] += 1
             if old:
                 con.execute("UPDATE assets SET availability='cloud_only', status=CASE WHEN status='analysed' "
-                            "THEN status ELSE 'cloud_only' END WHERE asset_id=?", (old["asset_id"],))
+                            "OR thumb_path IS NOT NULL THEN status ELSE 'cloud_only' END WHERE asset_id=?",
+                            (old["asset_id"],))
             else:
                 f = dict(base, file_path=p, status="cloud_only", availability="cloud_only")
                 con.execute(f"INSERT INTO assets({','.join(f)}) VALUES ({','.join('?' * len(f))})", tuple(f.values()))
@@ -913,6 +914,75 @@ def cmd_download(a):
         print("\nNext: scan the folder again (indexes them), then tag the batch with Claude Code.")
 
 
+def cmd_harvest(a):
+    """Stream cloud-only clips through the index one at a time: download -> read metadata + save thumbnails ->
+    free the space again. Disk use stays at about one clip; the cost is bandwidth and time, so it can run unattended.
+    After harvesting, clips can be tagged from their saved thumbnails without being on the PC."""
+    con = connect(a)
+    lib = lib_dir(a)
+    q = "SELECT * FROM assets WHERE status='cloud_only' AND availability='cloud_only'"
+    args = []
+    for col, op, val in (("media_type", "=", a.type), ("size", ">=", a.min_mb and int(a.min_mb * 1e6)),
+                         ("size", "<=", a.max_mb and int(a.max_mb * 1e6)),
+                         ("date_modified", ">=", a.since), ("date_modified", "<=", a.until and a.until + "T23:59:59")):
+        if val is not None and val != "":
+            q += f" AND {col} {op} ?"
+            args.append(val)
+    q += " AND file_path LIKE ?"
+    args.append((a.under.rstrip("\\/") + "%") if a.under else "%")
+    rows = con.execute(q + " ORDER BY date_modified DESC LIMIT ?", (*args, a.limit)).fetchall()
+    if not rows:
+        sys.exit("No untagged cloud-only clips match those filters.")
+    total_gb = sum(r["size"] or 0 for r in rows) / 1e9
+    biggest = max((r["size"] or 0) for r in rows) / 1e9
+    free = shutil.disk_usage(os.path.expanduser("~")).free / 1e9
+    print(f"{len(rows)} clips, {total_gb:.1f} GB to stream through (one at a time). "
+          f"Largest {biggest:.2f} GB; {free:.0f} GB free, keeping {a.reserve_gb:.0f} GB spare.")
+    if biggest > free - a.reserve_gb:
+        sys.exit("Even one of these clips would not fit in the free space. Lower --max-mb or --reserve-gb.")
+    if a.dry_run:
+        for r in rows[:15]:
+            print(f"  would harvest Clip {r['asset_id']}: {r['file_path']} ({(r['size'] or 0) / 1e6:.0f} MB)")
+        print("Dry run only: nothing was downloaded.")
+        return
+    stats = dict(found=0, local=0, cloud_only=0, new=0, changed=0, now_available=0, moved=0, unchanged=0,
+                 errors=0, skipped=0, excluded=0, thumbnails_created=0, error_reasons=Counter())
+    done = failed = 0
+    t0 = time.time()
+    try:
+        for i, r in enumerate(rows, 1):
+            pth = r["file_path"]
+            ok = False
+            try:
+                pin(pth, True)
+                if not wait_local([pth], a.timeout, label=f"clip {i}/{len(rows)}"):
+                    raise RuntimeError(f"did not finish downloading within {a.timeout}s")
+                st = os.stat(pth)
+                known = {os.path.normcase(pth): con.execute("SELECT * FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()}
+                index_file(con, known, pth, os.path.splitext(pth)[1].lower(), st, lib, stats, True)
+                ok = True
+            except Exception as e:
+                failed += 1
+                print(f"  FAILED Clip {r['asset_id']}: {str(e)[:100]}", file=sys.stderr)
+            finally:
+                try:
+                    pin(pth, False)                       # always give the space back
+                    con.execute("UPDATE assets SET availability='cloud_only' WHERE asset_id=?", (r["asset_id"],))
+                except Exception as e:
+                    print(f"  WARNING: could not free {pth}: {str(e)[:80]}", file=sys.stderr)
+                con.commit()
+            done += ok
+            el = time.time() - t0
+            eta = el / i * (len(rows) - i)
+            print(f"  {i}/{len(rows)} harvested ({el / 60:.1f} min elapsed, ~{eta / 60:.0f} min left)", file=sys.stderr)
+    except KeyboardInterrupt:
+        print("\nStopped. Everything harvested so far is saved; run the same command to continue.")
+    assign_sessions(con)
+    con.commit()
+    print(f"Harvested {done}, failed {failed}. Thumbnails: {stats['thumbnails_created']}, "
+          f"audio-only skipped: {stats['skipped']}. Next: tag them with `pending`.")
+
+
 def cmd_free(a):
     """Release disk space for clips already analysed. Never deletes: iCloud keeps the originals."""
     con = connect(a)
@@ -975,7 +1045,7 @@ def assign_sessions(con):
 def cmd_pending(a):
     """Assets still needing visual analysis, with a contact-sheet image for Claude to look at."""
     con = connect(a)
-    q = ("SELECT * FROM assets WHERE status='probed' AND availability='local' "
+    q = ("SELECT * FROM assets WHERE status='probed' AND (availability='local' OR thumb_path IS NOT NULL) "
          "AND (extra IS NULL OR extra NOT LIKE '%live_photo_pair%') "
          "AND (duplicate_status IS NOT 'exact_duplicate' OR "      # IS NOT: NULL-safe (plain != drops every NULL row)
          "duplicate_of NOT IN (SELECT asset_id FROM assets WHERE status!='missing'))")
@@ -1324,6 +1394,13 @@ def main():
     s.add_argument("--max-mb", type=float, help="skip huge clips")
     s.add_argument("--reserve-gb", type=float, default=60); s.add_argument("--timeout", type=int, default=900)
     s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_download)
+    s = sub.add_parser("harvest", help="stream cloud-only clips: download, save thumbnails + metadata, free the space")
+    s.add_argument("--type", choices=["video", "image"]); s.add_argument("--limit", type=int, default=100)
+    s.add_argument("--min-mb", type=float); s.add_argument("--max-mb", type=float)
+    s.add_argument("--since", help="YYYY-MM-DD"); s.add_argument("--until", help="YYYY-MM-DD")
+    s.add_argument("--under", help="only files whose path starts with this folder")
+    s.add_argument("--reserve-gb", type=float, default=30); s.add_argument("--timeout", type=int, default=600)
+    s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_harvest)
     s = sub.add_parser("free", help="free disk space for clips that are already tagged (never deletes)")
     s.add_argument("--analysed", action="store_true"); s.add_argument("--ids", nargs="+", type=int)
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
