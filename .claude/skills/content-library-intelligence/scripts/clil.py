@@ -451,6 +451,41 @@ def pick_test_sample(entries, n):
     return chosen
 
 
+def video_strip(path, duration, out, n=4, per_frame_timeout=60):
+    """Contact sheet for a video: n frames grabbed by fast seeking (-ss before -i jumps to the nearest keyframe
+    instead of decoding the whole clip, which would take minutes for a long 4K HEVC video), tiled with Pillow."""
+    tmp = out.parent / f"_tmp_{out.stem}"
+    tmp.mkdir(parents=True, exist_ok=True)
+    frames = []
+    dur = max(duration or 1.0, 0.5)
+    try:
+        for i in range(n):
+            t = dur * (0.1 + 0.8 * i / (n - 1)) if dur > 1 else 0
+            f = tmp / f"f{i}.jpg"
+            try:
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.2f}", "-i", path, "-frames:v", "1",
+                                "-vf", "scale=360:-2", "-q:v", "4", str(f)],
+                               capture_output=True, timeout=per_frame_timeout)
+            except subprocess.TimeoutExpired:
+                continue
+            if f.exists() and f.stat().st_size > 0:
+                frames.append(f)
+        if not frames:
+            return
+        Image, _ = pil()
+        ims = [Image.open(f).convert("RGB") for f in frames]
+        sheet = Image.new("RGB", (sum(i.width for i in ims) + 2 * (len(ims) - 1), max(i.height for i in ims)), "black")
+        x = 0
+        for im in ims:
+            sheet.paste(im, (x, 0))
+            x += im.width + 2
+        sheet.save(out, "JPEG", quality=85)
+    except Exception:
+        out.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def contact_sheet(lib, r):
     """Windows-safe derivatives in the library folder: Pillow for images (incl. HEIC), ffmpeg for video frames."""
     out = lib / "contact_sheets" / f"{r['asset_id']}.jpg"
@@ -474,15 +509,13 @@ def contact_sheet(lib, r):
             out.unlink(missing_ok=True)
     if not out.exists() and shutil.which("ffmpeg"):
         if r["media_type"] == "video":
-            d = max(r["duration"] or 1, 1)
-            vf = f"fps=4/{d},scale=360:-2,tile=4x1:padding=2"
+            video_strip(r["file_path"], r["duration"], out)
         else:
-            vf = "scale=720:-2"
-        try:
-            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", vf, "-frames:v", "1",
-                            str(out)], capture_output=True, timeout=180)
-        except Exception:
-            pass
+            try:
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", "scale=720:-2",
+                                "-frames:v", "1", str(out)], capture_output=True, timeout=120)
+            except Exception:
+                pass
     return str(out) if out.exists() and out.stat().st_size > 0 else None
 
 
@@ -611,7 +644,8 @@ def cmd_scan(a):
     for i, (p, ext, st) in enumerate(entries, 1):
         seen.add(os.path.normcase(p))
         index_file(con, known, p, ext, st, lib, stats, a.thumbs or a.test)
-        if i % 200 == 0:
+        step = 5 if (a.thumbs or a.test) else 200
+        if i % step == 0:
             con.commit()                                   # resumable: Ctrl+C then re-run continues
             print(f"  {i}/{len(entries)} processed ({time.time() - t0:.0f}s)", file=sys.stderr)
     missing = 0
