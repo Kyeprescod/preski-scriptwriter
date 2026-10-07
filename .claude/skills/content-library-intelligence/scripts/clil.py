@@ -1229,7 +1229,7 @@ def cmd_report(a):
     rows = [
         ("TOTAL ASSETS FOUND", "SELECT COUNT(*) FROM assets WHERE status NOT IN ('missing','excluded')"),
         ("TOTAL ASSETS INDEXED (local)", f"SELECT COUNT(*) FROM assets WHERE {live}"),
-        ("CLOUD_ONLY / NOT_DOWNLOADED", "SELECT COUNT(*) FROM assets WHERE availability='cloud_only' AND status!='missing'"),
+        ("CLOUD_ONLY / NOT_DOWNLOADED", "SELECT COUNT(*) FROM assets WHERE availability='cloud_only' AND status NOT IN ('missing','excluded')"),
         ("TOTAL VIDEO ASSETS", f"SELECT COUNT(*) FROM assets WHERE media_type='video' AND {live}"),
         ("TOTAL IMAGE ASSETS", f"SELECT COUNT(*) FROM assets WHERE media_type='image' AND {live}"),
         ("TOTAL FITNESS ASSETS", f"SELECT COUNT(*) FROM assets WHERE {fit}"),
