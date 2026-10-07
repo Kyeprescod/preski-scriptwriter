@@ -11,7 +11,7 @@ NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are 
 attributes and never opened (opening one would make iCloud download it). Everything generated lives
 in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: doctor detect init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect folders init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
 """
 import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
 from collections import Counter, defaultdict
@@ -30,7 +30,7 @@ MEDIA_EXT = VIDEO_EXT | IMAGE_EXT
 SESSION_GAP_S = 45 * 60
 LIVE_PHOTO_MAX_S = 4.5
 SKIP_DIRS = {"thumbnails", ".thumbnails", "@eadir", "$recycle.bin", "system volume information",
-             ".git", "node_modules"}
+             ".git", "node_modules", "temp", "tmp", "cache", "caches"}   # editor/app junk, never footage
 HERE = Path(__file__).resolve().parent
 TAXONOMY = json.loads((HERE.parent / "references" / "taxonomy.json").read_text(encoding="utf-8"))
 
@@ -399,7 +399,7 @@ def cmd_init(a):
     con.close()
 
 
-def iter_media(sources, problems):
+def iter_media(sources, problems, excludes=()):
     """Walk with scandir: file attributes come with the directory listing, so cloud-only files are never opened."""
     for src in sources:
         stack = [os.path.abspath(os.path.expanduser(str(src)))]
@@ -414,7 +414,9 @@ def iter_media(sources, problems):
                 for e in it:
                     try:
                         if e.is_dir(follow_symlinks=False):
-                            if e.name.lower() not in SKIP_DIRS and not e.name.startswith("."):
+                            low = e.path.lower()
+                            if e.name.lower() not in SKIP_DIRS and not e.name.startswith(".") \
+                                    and not any(x in low for x in excludes):
                                 stack.append(e.path)
                             continue
                         ext = os.path.splitext(e.name)[1].lower()
@@ -543,7 +545,7 @@ def index_file(con, known, p, ext, st, lib, stats, thumbs):
         if old and old["status"] not in ("cloud_only", "error") and old["size"] == st.st_size \
                 and abs((old["mtime"] or 0) - st.st_mtime) < 1:
             upd = {}
-            if old["status"] == "missing":
+            if old["status"] in ("missing", "excluded"):
                 upd["status"] = "analysed" if old["analysed_at"] else "probed"
             if old["availability"] != "local":
                 upd["availability"] = "local"
@@ -646,13 +648,14 @@ def cmd_scan(a):
     problems = []
     t0 = time.time()
     print("Listing files (no file contents are read)...", file=sys.stderr)
-    entries = list(iter_media(sources, problems))
+    excludes = [x.lower() for x in (a.exclude or [])]
+    entries = list(iter_media(sources, problems, excludes))
     whole = dict(found=len(entries), cloud=sum(1 for e in entries if is_cloud_only(e[2])))
     if a.test:
         entries = pick_test_sample(entries, a.sample)
     known = {os.path.normcase(r["file_path"]): r for r in con.execute("SELECT * FROM assets")}
     stats = dict(found=len(entries), local=0, cloud_only=0, new=0, changed=0, now_available=0, moved=0,
-                 unchanged=0, errors=0, skipped=0, thumbnails_created=0, error_reasons=Counter())
+                 unchanged=0, errors=0, skipped=0, excluded=0, thumbnails_created=0, error_reasons=Counter())
     seen = set()
     for i, (p, ext, st) in enumerate(entries, 1):
         seen.add(os.path.normcase(p))
@@ -667,9 +670,15 @@ def cmd_scan(a):
         for key, r in known.items():
             cur = con.execute("SELECT file_path,status FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()
             if os.path.normcase(cur["file_path"]) == key and key.startswith(roots) and key not in seen \
-                    and cur["status"] != "missing":
-                con.execute("UPDATE assets SET status='missing' WHERE asset_id=?", (r["asset_id"],))
-                missing += 1
+                    and cur["status"] not in ("missing", "excluded"):
+                parts = {x.lower() for x in cur["file_path"].replace("/", os.sep).split(os.sep)}
+                low = cur["file_path"].lower()
+                if parts & SKIP_DIRS or any(x in low for x in excludes):
+                    con.execute("UPDATE assets SET status='excluded' WHERE asset_id=?", (r["asset_id"],))
+                    stats["excluded"] += 1
+                else:
+                    con.execute("UPDATE assets SET status='missing' WHERE asset_id=?", (r["asset_id"],))
+                    missing += 1
     con.commit()
     assign_sessions(con)
     mark_near_duplicates(con)
@@ -1161,6 +1170,26 @@ def cmd_dupes(a):
     print("\nNothing has been deleted or moved. Review and approve any removal yourself.")
 
 
+def cmd_folders(a):
+    """Which folders hold the most files? Spot junk (editor caches, thumbnails) before tagging anything."""
+    con = connect(a)
+    c = defaultdict(Counter)
+    for r in con.execute("SELECT file_path,media_type,status,date_source,duplicate_status FROM assets "
+                         "WHERE status IN ('probed','analysed','cloud_only','skipped')"):
+        k = c[os.path.dirname(r["file_path"])]
+        k["total"] += 1
+        k[r["media_type"] or "other"] += 1
+        k["cloud"] += r["status"] == "cloud_only"
+        k["nodate"] += r["date_source"] == "file_time"
+        k["dupes"] += r["duplicate_status"] is not None
+    print(f"{'TOTAL':>6} {'VIDEO':>6} {'IMAGE':>6} {'CLOUD':>6} {'NO-DATE':>8} {'DUPES':>6}  FOLDER")
+    for d, k in sorted(c.items(), key=lambda x: -x[1]["total"])[:a.top]:
+        print(f"{k['total']:>6} {k['video']:>6} {k['image']:>6} {k['cloud']:>6} {k['nodate']:>8} {k['dupes']:>6}  "
+              + (d if len(d) <= 90 else "..." + d[-87:]))
+    print("\nNO-DATE = no camera capture date in the file (screenshots, downloads, app-generated images).")
+    print("Exclude junk folders with:  scan \"<root>\" --exclude \"<part of folder path>\"")
+
+
 def cmd_status(a):
     con = connect(a)
     for r in con.execute("SELECT status,COUNT(*) c FROM assets GROUP BY status"):
@@ -1176,7 +1205,7 @@ def cmd_report(a):
     live = "status IN ('probed','analysed')"
     fit = "status='analysed' AND category IS NOT NULL AND category NOT IN ('other','lifestyle','b-roll')"
     rows = [
-        ("TOTAL ASSETS FOUND", f"SELECT COUNT(*) FROM assets WHERE status!='missing'"),
+        ("TOTAL ASSETS FOUND", "SELECT COUNT(*) FROM assets WHERE status NOT IN ('missing','excluded')"),
         ("TOTAL ASSETS INDEXED (local)", f"SELECT COUNT(*) FROM assets WHERE {live}"),
         ("CLOUD_ONLY / NOT_DOWNLOADED", "SELECT COUNT(*) FROM assets WHERE availability='cloud_only' AND status!='missing'"),
         ("TOTAL VIDEO ASSETS", f"SELECT COUNT(*) FROM assets WHERE media_type='video' AND {live}"),
@@ -1187,7 +1216,7 @@ def cmd_report(a):
                                 "asset_id IN (SELECT asset_id FROM tags WHERE tag='cardio'))"),
         ("TOTAL TRAINING ASSETS", "SELECT COUNT(*) FROM assets WHERE status='analysed' AND category='training'"),
         ("TOTAL HIGH-POTENTIAL (>=8)", "SELECT COUNT(*) FROM assets WHERE content_potential_score>=8"),
-        ("DUPLICATES / NEAR-DUPLICATES", "SELECT COUNT(*) FROM assets WHERE duplicate_status IS NOT NULL"),
+        ("DUPLICATES / NEAR-DUPLICATES", "SELECT COUNT(*) FROM assets WHERE duplicate_status IS NOT NULL AND status IN ('probed','analysed')"),
     ]
     print("CONTENT LIBRARY INTELLIGENCE REPORT")
     for label, sql in rows:
@@ -1203,7 +1232,7 @@ def cmd_report(a):
     st = {r["status"]: r["c"] for r in con.execute("SELECT status,COUNT(*) c FROM assets GROUP BY status")}
     print("\nINDEX STATUS")
     print(f"  analysed {st.get('analysed', 0)} | awaiting analysis {st.get('probed', 0)} | "
-          f"cloud-only {st.get('cloud_only', 0)} | skipped audio-only {st.get('skipped', 0)} | "
+          f"cloud-only {st.get('cloud_only', 0)} | skipped audio-only {st.get('skipped', 0)} | excluded {st.get('excluded', 0)} | "
           f"missing from disk {st.get('missing', 0)} | errors {st.get('error', 0)}")
     ds = Counter(r[0] or "none" for r in con.execute(f"SELECT date_source FROM assets WHERE {live}"))
     print(f"  capture date source: {dict(ds)}  (file_time = no metadata date, less reliable for sessions)")
@@ -1227,6 +1256,7 @@ def main():
     s.add_argument("--sample", type=int, default=40, help="test sample size (20-50)")
     s.add_argument("--thumbs", action="store_true", help="also create thumbnails during the scan")
     s.add_argument("--skip-test", action="store_true", help="bypass the must-pass-test gate")
+    s.add_argument("--exclude", nargs="+", metavar="TEXT", help="skip any folder whose path contains this text")
     s.set_defaults(fn=cmd_scan)
     s = sub.add_parser("pending"); s.add_argument("--limit", type=int, default=20)
     s.add_argument("--session"); s.set_defaults(fn=cmd_pending)
@@ -1257,6 +1287,7 @@ def main():
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
     sub.add_parser("dupes").set_defaults(fn=cmd_dupes)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    s = sub.add_parser("folders"); s.add_argument("--top", type=int, default=20); s.set_defaults(fn=cmd_folders)
     sub.add_parser("report").set_defaults(fn=cmd_report)
     a = p.parse_args()
     a.fn(a)
