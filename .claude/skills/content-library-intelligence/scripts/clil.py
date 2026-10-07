@@ -1183,7 +1183,9 @@ def cmd_folders(a):
         k["nodate"] += r["date_source"] == "file_time"
         k["dupes"] += r["duplicate_status"] is not None
     print(f"{'TOTAL':>6} {'VIDEO':>6} {'IMAGE':>6} {'CLOUD':>6} {'NO-DATE':>8} {'DUPES':>6}  FOLDER")
-    for d, k in sorted(c.items(), key=lambda x: -x[1]["total"])[:a.top]:
+    key = {"total": "total", "nodate": "nodate", "dupes": "dupes", "video": "video", "cloud": "cloud"}[a.by]
+    print(f"(sorted by {a.by}; {len(c)} folders in total)")
+    for d, k in sorted(c.items(), key=lambda x: -x[1][key])[:a.top]:
         print(f"{k['total']:>6} {k['video']:>6} {k['image']:>6} {k['cloud']:>6} {k['nodate']:>8} {k['dupes']:>6}  "
               + (d if len(d) <= 90 else "..." + d[-87:]))
     print("\nNO-DATE = no camera capture date in the file (screenshots, downloads, app-generated images).")
@@ -1287,7 +1289,8 @@ def main():
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
     sub.add_parser("dupes").set_defaults(fn=cmd_dupes)
     sub.add_parser("status").set_defaults(fn=cmd_status)
-    s = sub.add_parser("folders"); s.add_argument("--top", type=int, default=20); s.set_defaults(fn=cmd_folders)
+    s = sub.add_parser("folders"); s.add_argument("--top", type=int, default=20)
+    s.add_argument("--by", choices=["total", "nodate", "dupes", "video", "cloud"], default="total"); s.set_defaults(fn=cmd_folders)
     sub.add_parser("report").set_defaults(fn=cmd_report)
     a = p.parse_args()
     a.fn(a)
