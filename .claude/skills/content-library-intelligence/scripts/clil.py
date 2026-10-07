@@ -892,6 +892,12 @@ def cmd_download(a):
     if a.type:
         q += " AND media_type=?"
         args.append(a.type)
+    if a.min_mb is not None:
+        q += " AND size>=?"
+        args.append(int(a.min_mb * 1e6))
+    if a.max_mb is not None:
+        q += " AND size<=?"
+        args.append(int(a.max_mb * 1e6))
     if a.since:
         q += " AND date_modified>=?"
         args.append(a.since)
@@ -977,7 +983,15 @@ def cmd_pending(a):
     if a.session:
         q += " AND session_id=?"
         args.append(a.session)
+    for col, op, val in (("media_type", "=", a.type), ("orientation", "=", a.orientation),
+                         ("duration", ">=", a.min_seconds), ("duration", "<=", a.max_seconds),
+                         ("date_created", ">=", a.since), ("date_created", "<=", a.until and a.until + "T23:59:59")):
+        if val is not None:
+            q += f" AND {col} {op} ?"
+            args.append(val)
     rows = con.execute(q + " ORDER BY date_created DESC LIMIT ?", (*args, a.limit)).fetchall()
+    left = con.execute(q.replace("SELECT *", "SELECT COUNT(*)", 1), args).fetchone()[0]
+    print(f"{len(rows)} shown, {left} clips match these filters and still need tagging", file=sys.stderr)
     out = []
     for r in rows:
         out.append({"asset_id": r["asset_id"], "file_name": r["file_name"], "media_type": r["media_type"],
@@ -1281,7 +1295,11 @@ def main():
     s.add_argument("--exclude", nargs="+", metavar="TEXT", help="skip any folder whose path contains this text")
     s.set_defaults(fn=cmd_scan)
     s = sub.add_parser("pending"); s.add_argument("--limit", type=int, default=20)
-    s.add_argument("--session"); s.set_defaults(fn=cmd_pending)
+    s.add_argument("--session"); s.add_argument("--type", choices=["video", "image"])
+    s.add_argument("--orientation", choices=["portrait", "landscape", "square"])
+    s.add_argument("--min-seconds", type=float); s.add_argument("--max-seconds", type=float)
+    s.add_argument("--since", help="YYYY-MM-DD"); s.add_argument("--until", help="YYYY-MM-DD")
+    s.set_defaults(fn=cmd_pending)
     s = sub.add_parser("annotate"); s.add_argument("file", help="JSONL file or - for stdin"); s.set_defaults(fn=cmd_annotate)
     s = sub.add_parser("sessions"); s.add_argument("--limit", type=int, default=20); s.set_defaults(fn=cmd_sessions)
     s = sub.add_parser("search"); s.add_argument("query"); s.add_argument("--limit", type=int, default=10)
@@ -1302,6 +1320,8 @@ def main():
     s = sub.add_parser("download", help="download a batch of untagged clips by date so they can be tagged")
     s.add_argument("--since", help="YYYY-MM-DD"); s.add_argument("--until", help="YYYY-MM-DD")
     s.add_argument("--type", choices=["video", "image"]); s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--min-mb", type=float, help="skip tiny clips (cloud-only files have no duration yet; size is the proxy)")
+    s.add_argument("--max-mb", type=float, help="skip huge clips")
     s.add_argument("--reserve-gb", type=float, default=60); s.add_argument("--timeout", type=int, default=900)
     s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_download)
     s = sub.add_parser("free", help="free disk space for clips that are already tagged (never deletes)")
