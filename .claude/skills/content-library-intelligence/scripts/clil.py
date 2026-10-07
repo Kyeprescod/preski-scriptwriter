@@ -743,9 +743,13 @@ def test_report(con, stats, whole, problems, sources, marker, secs):
         print(f"  NOTE: {w}")
     if fails:
         print("\nTEST FAILED: " + "; ".join(fails) + ". Fix the above (run `doctor`) and re-run the test. Full scan is blocked.")
-        marker.unlink(missing_ok=True)
-        sys.exit(1)
-    marker.write_text(json.dumps({"sources": sources, "passed_at": now(), "sample": stats["found"],
+        sys.exit(1)                      # an earlier pass for other folders stays valid
+    try:
+        prior = json.loads(marker.read_text(encoding="utf-8")).get("sources", [])
+    except Exception:
+        prior = []
+    merged = list(dict.fromkeys([*prior, *sources]))          # passing one folder never revokes another
+    marker.write_text(json.dumps({"sources": merged, "passed_at": now(), "sample": stats["found"],
                                   "indexed": indexed}), encoding="utf-8")
     print(f"\nTEST PASSED in {secs}s. Next: run the same command without --test to index everything.")
     print(f"Test thumbnails: {lib_dir_of(marker) / '_test' / 'contact_sheets'}")
