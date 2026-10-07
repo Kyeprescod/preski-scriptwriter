@@ -16,12 +16,14 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 
 ## The tool
 
-`python3 .claude/skills/content-library-intelligence/scripts/clil.py --lib <dir> <command>` (stdlib only; ffprobe/ffmpeg make probing and contact sheets work).
+`python3 .claude/skills/content-library-intelligence/scripts/clil.py --lib <dir> <command>` (needs Pillow + pillow-heif + ffmpeg/ffprobe; `setup_windows.ps1` installs them).
 
 | Command | Does |
 |---|---|
+| `doctor` | check Pillow, pillow-heif (HEIC), ffmpeg/ffprobe |
+| `detect [--also dir]` | find media folders on this PC with counts incl. cloud-only |
 | `init` | create library folder + SQLite DB (FTS5 search index) |
-| `scan <folders...>` | incremental: new/changed files only (path+size+mtime), sampled hash, ffprobe metadata, session grouping, exact/near-dupe flags, moved-file tracking, missing-file flagging. Safe to re-run daily |
+| `scan [--test] [--thumbs] <folders...>` | incremental: new/changed files only (path+size+mtime), sampled hash, ffprobe metadata, session grouping, exact/near-dupe flags, moved-file tracking, missing-file flagging. Safe to re-run daily |
 | `pending --limit N [--session S]` | JSON of probed-but-unanalysed assets with a contact-sheet image path each |
 | `annotate <file.jsonl\|->` | upsert analysis (see below), updates search index |
 | `search "<natural language>" [--limit --type --min-visual --same-session --json]` | ranked retrieval with semantic expansion (`references/taxonomy.json`) |
@@ -29,17 +31,29 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `mark-used <project> <ids...>` | usage_count / last_used so footage can be rotated |
 | `sessions`, `dupes`, `status`, `report` | inspection and the final report |
 
-## Mac / iCloud setup
-`bash .claude/skills/content-library-intelligence/scripts/setup_mac.sh [folder...]` runs init + scan + report. With no argument it scans `~/Pictures/*.photoslibrary/originals` (the real files; thumbnails/derivatives are skipped). Notes to relay to Kye:
-- Photos app: Settings > iCloud > **Download Originals to this Mac**, or files are `.icloud` stubs. The scan counts these as `icloud_not_downloaded` and does not index them; tell him the number.
-- Terminal needs Full Disk Access to read the Photos library.
-- Capture dates come from QuickTime/EXIF (via ffprobe / macOS `sips`), not file timestamps, so sessions group correctly. Needs `brew install ffmpeg`.
-- Windows iCloud Photos: `python3 clil.py scan "%USERPROFILE%\Pictures\iCloud Photos\Photos"`.
+## Windows + iCloud setup (Kye's machine: ASUS VivoBook, Windows; iPhone -> iCloud Photos)
+Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\Pictures\iCloud Photos\Photos`) and local folders -> `clil.py` -> `library.db`.
+
+One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
+
+Then, with the launcher (`clil.cmd`):
+1. `clil.cmd detect` - lists candidate folders with video/image/cloud-only counts. Pick the most specific folder(s).
+2. `clil.cmd scan --test "<folder>"` - indexes a 20-50 asset sample (mixed formats/sizes/years) into a separate test library, prints TOTAL FOUND / LOCALLY AVAILABLE / CLOUD ONLY / SUCCESSFULLY INDEXED / FAILED / THUMBNAILS CREATED / METADATA EXTRACTED / CAPTURE DATES FOUND / HEIC FILES PROCESSED / VIDEO FILES PROCESSED and PASS/FAIL.
+3. `clil.cmd scan "<folder>" ["<folder2>"]` - the full scan. **Refused until step 2 has passed for those folders.** Safe to Ctrl+C and re-run (commits every 200 files). Add `--thumbs` to also pre-build thumbnails; otherwise they are created on demand by `pending`.
+4. Daily after new footage syncs: re-run step 3; only new/changed/newly-downloaded files are processed.
+
+Rules that matter on Windows:
+- **Cloud-only files** (iCloud placeholders; Windows file attributes RECALL_ON_DATA_ACCESS / RECALL_ON_OPEN / OFFLINE) are detected from directory metadata and **never opened** (opening would trigger an iCloud download). They get `status=availability=cloud_only` and show as `CLOUD_ONLY / NOT_DOWNLOADED`; they are not counted as indexed and never appear in `pending`. When Kye downloads them (File Explorer > right-click folder > *Always keep on this device*), the next scan indexes them (`now_available`). Always tell him the cloud-only count, and that files iCloud hasn't synced to the PC at all can't be seen: compare the total with the photo+video count on the iPhone.
+- **HEIC** is read with Pillow + pillow-heif, never assumed decodable by FFmpeg. `doctor` must show HEIC registered. Videos use ffprobe/ffmpeg.
+- **Capture date** comes from EXIF DateTimeOriginal (photos), QuickTime `creationdate`/container `creation_time` (videos); `date_source` records which (`exif|quicktime|container|file_time`). `file_time` is a last-resort fallback (PNG screenshots, edited/stripped files) and is weaker for session grouping; say so when it matters.
+- **Live Photos**: the short `.MOV` that shares a filename stem with a HEIC/JPG is flagged `live_photo_pair`; it is indexed but skipped by `pending`.
+- Thumbnails/contact sheets, the DB and transcripts live only under `%USERPROFILE%\preski-library`. Originals are never written to.
+- Windows console/encoding is handled (UTF-8). Annotation JSONL files are read as UTF-8 (BOM tolerated).
 
 ## Workflow
 
 ### 1. Index (cheap, automatic)
-`init` once, then `scan` the camera-roll folder(s). Report counts (`new / changed / moved / unchanged / errors`). A rescan of 13,000 assets only hashes and probes what changed.
+Follow the Windows steps above: `detect`, `scan --test`, then (only after PASS) the full `scan`. Report counts (`new / changed / now_available / moved / unchanged / cloud_only / errors`). A rescan of 13,000 assets only hashes and probes what changed.
 
 ### 2. Analyse (the intelligent part, in batches)
 Never open videos one by one. Loop:
@@ -67,6 +81,7 @@ Other skills consume `search --json` / `match-script` output: `asset_id, score, 
 Run `report` and present it with these headings: TOTAL ASSETS SCANNED, TOTAL VIDEO ASSETS, TOTAL IMAGE ASSETS, TOTAL FITNESS ASSETS, TOTAL TALKING-HEAD ASSETS, TOTAL CARDIO ASSETS, TOTAL TRAINING ASSETS, TOTAL HIGH-POTENTIAL ASSETS, TOTAL DUPLICATES / NEAR DUPLICATES, TOP CONTENT CATEGORIES, TOP HIGH-POTENTIAL FOOTAGE, INDEX STATUS, plus errors and anything that couldn't be analysed. Be explicit that fitness/cardio/training/talking-head totals only cover **analysed** assets and state how many remain unanalysed; never present a partial count as the whole library.
 
 ## Limits to state honestly
+- Windows cloud-only detection relies on the placeholder attributes iCloud for Windows sets; if the iCloud client hides un-downloaded items entirely they cannot be counted, so verify totals against the iPhone.
 - Exact duplicates use a sampled hash (head/middle/tail + size). Near-duplicates are cheap candidates (same duration/resolution/session) until visually confirmed. No perceptual hashing yet.
 - Audio quality and stability are judgement calls from contact sheets unless Kye supplies more; score them only when evidenced, otherwise leave null.
 - Embeddings are not used; semantic matching is taxonomy-driven. Extend `references/taxonomy.json` when a search misses obvious relatives.

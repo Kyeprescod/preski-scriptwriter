@@ -1,24 +1,44 @@
 #!/usr/bin/env python3
 """Content Library Intelligence (clil): searchable metadata index over a raw footage archive.
 
-Standard library only. Needs ffprobe/ffmpeg on PATH for probing and contact sheets (optional).
+Built for Windows + iCloud Photos (also runs on Linux/macOS). Needs:
+  - Python 3.9+
+  - Pillow + pillow-heif   (images incl. HEIC: metadata, EXIF capture date, thumbnails)
+  - ffmpeg + ffprobe       (videos: metadata, frame extraction)
+Run `doctor` to check, `detect` to find your library, `scan --test` before the full scan.
 
-NON-DESTRUCTIVE: source folders are only ever READ. Everything generated (database, contact
-sheets, transcripts) lives in the library folder (--lib / $CLIL_LIB / ~/preski-library).
+NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are detected from file
+attributes and never opened (opening one would make iCloud download it). Everything generated lives
+in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: init scan pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect init scan pending annotate sessions search match-script mark-used dupes report status
 """
-import argparse, hashlib, json, os, re, shutil, sqlite3, subprocess, sys, time
+import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+for _s in (sys.stdout, sys.stderr, sys.stdin):        # Windows consoles default to cp1252
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".3gp"}
-IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tiff", ".dng"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tiff", ".tif", ".dng", ".bmp"}
+MEDIA_EXT = VIDEO_EXT | IMAGE_EXT
 SESSION_GAP_S = 45 * 60
-SKIP_DIRS = {"derivatives", "resources", "thumbnails", ".thumbnails", "database", "private", "scopes",
-             ".git", "node_modules", "@eadir"}   # Photos-library internals / thumbnail caches
+LIVE_PHOTO_MAX_S = 4.5
+SKIP_DIRS = {"thumbnails", ".thumbnails", "@eadir", "$recycle.bin", "system volume information",
+             ".git", "node_modules"}
 HERE = Path(__file__).resolve().parent
-TAXONOMY = json.loads((HERE.parent / "references" / "taxonomy.json").read_text())
+TAXONOMY = json.loads((HERE.parent / "references" / "taxonomy.json").read_text(encoding="utf-8"))
+
+# Windows cloud-file placeholder attributes (iCloud Photos / iCloud Drive / OneDrive use these)
+ATTR_OFFLINE = 0x1000
+ATTR_RECALL_ON_OPEN = 0x40000
+ATTR_RECALL_ON_DATA_ACCESS = 0x400000
+CLOUD_ATTRS = ATTR_OFFLINE | ATTR_RECALL_ON_OPEN | ATTR_RECALL_ON_DATA_ACCESS
 
 TEXT_FIELDS = ["category", "subcategory", "exercise", "activity", "environment", "subject",
                "description", "transcript", "shot_type"]
@@ -64,21 +84,35 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
   environment, file_name, tokenize='porter unicode61');
 """
 
+NEW_COLS = {"availability": "TEXT DEFAULT 'local'",   # local | cloud_only
+            "date_source": "TEXT",                    # exif | quicktime | container | file_time
+            "thumb_path": "TEXT"}
+
 
 # ---------------------------------------------------------------- helpers
-def lib_dir(args):
+def base_dir(args):
     return Path(args.lib or os.environ.get("CLIL_LIB") or Path.home() / "preski-library").expanduser()
+
+
+def lib_dir(args):
+    """Test mode writes to its own sub-library so the real index starts clean."""
+    b = base_dir(args)
+    return b / "_test" if getattr(args, "test", False) else b
 
 
 def connect(args, create=False):
     lib = lib_dir(args)
     db = lib / "library.db"
     if not db.exists() and not create:
-        sys.exit(f"No library at {lib}. Run: clil.py init --lib {lib}")
+        sys.exit(f"No library at {lib}. Run: clil init")
     lib.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    have = {r[1] for r in con.execute("PRAGMA table_info(assets)")}
+    for c, t in NEW_COLS.items():
+        if c not in have:
+            con.execute(f"ALTER TABLE assets ADD COLUMN {c} {t}")
     return con
 
 
@@ -88,6 +122,30 @@ def now():
 
 def iso(ts):
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_dt(s):
+    """Parse EXIF ('2026:10:01 18:22:11'), ISO, 'Z' and '+0100' style stamps. None if unparseable."""
+    if not s:
+        return None
+    s = str(s).strip().replace("Z", "+00:00")
+    s = re.sub(r"^(\d{4}):(\d\d):(\d\d)", r"\1-\2-\3", s)
+    s = re.sub(r"([+-]\d\d)(\d\d)$", r"\1:\2", s)
+    try:
+        return datetime.fromisoformat(s.replace(" ", "T", 1))
+    except ValueError:
+        return None
+
+
+def valid_date(s):
+    d = parse_dt(s)
+    return d is not None and 1995 <= d.year <= datetime.now().year + 1   # rejects 1904/1970 epoch zeros
+
+
+def is_cloud_only(st):
+    """True if the file is a cloud placeholder (bytes not on this PC). Windows only; uses stat metadata
+    that does NOT trigger a download."""
+    return bool(getattr(st, "st_file_attributes", 0) & CLOUD_ATTRS)
 
 
 def quick_hash(path, size):
@@ -100,69 +158,145 @@ def quick_hash(path, size):
     return h.hexdigest()
 
 
-def ffprobe(path):
-    if not shutil.which("ffprobe"):
-        return None
+# ---- images: Pillow (+ pillow-heif for HEIC). ffmpeg is NOT relied on for HEIC.
+_PIL = None
+
+
+def pil():
+    global _PIL
+    if _PIL is None:
+        try:
+            from PIL import Image, ImageOps
+        except ImportError:
+            raise RuntimeError("Pillow not installed (run setup_windows.ps1 or: pip install pillow pillow-heif)")
+        try:
+            import pillow_heif
+            pillow_heif.register_heif_opener()
+        except ImportError:
+            pass
+        _PIL = (Image, ImageOps)
+    return _PIL
+
+
+def heic_supported():
     try:
-        out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
-                              "-show_streams", str(path)], capture_output=True, text=True, timeout=60)
-        return json.loads(out.stdout) if out.returncode == 0 else None
-    except Exception:
-        return None
+        Image, _ = pil()
+        return ".heic" in Image.registered_extensions()
+    except RuntimeError:
+        return False
 
 
-def probe_fields(path, media_type):
-    """Technical metadata only. Anything undeterminable stays NULL (never invented)."""
-    info = ffprobe(path)
-    if not info:
-        return {}
-    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
-    fields = {"has_audio": int(any(s.get("codec_type") == "audio" for s in info["streams"]))}
-    if v:
-        w, h = v.get("width"), v.get("height")
-        rot = 0
-        for sd in v.get("side_data_list", []) or []:
-            rot = int(sd.get("rotation", 0) or 0)
-        rot = int(v.get("tags", {}).get("rotate", rot) or rot)
-        if abs(rot) in (90, 270) and w and h:
+def _dms(v, ref):
+    d, m, s = (float(x) for x in v)
+    val = d + m / 60 + s / 3600
+    return -val if ref in ("S", "W") else val
+
+
+def probe_image(path):
+    Image, _ = pil()
+    fields = {"has_audio": 0}
+    with Image.open(path) as im:
+        w, h = im.size
+        ex = im.getexif()
+        if ex.get(0x0112) in (5, 6, 7, 8):          # EXIF says rotated 90deg (pillow-heif already applies HEIC rotation)
             w, h = h, w
-        if w and h:
-            from math import gcd
-            g = gcd(w, h)
-            fields.update(width=w, height=h, resolution=f"{w}x{h}", aspect_ratio=f"{w // g}:{h // g}",
-                          orientation="portrait" if h > w else "landscape" if w > h else "square")
-        fields["codec"] = v.get("codec_name")
-        if media_type == "video":
-            try:
-                n, d = v.get("avg_frame_rate", "0/1").split("/")
-                fields["fps"] = round(float(n) / float(d), 2) if float(d) else None
-            except Exception:
-                pass
-    dur = info.get("format", {}).get("duration")
-    if dur and media_type == "video":
-        fields["duration"] = round(float(dur), 2)
-    tags = {k.lower(): val for k, val in info.get("format", {}).get("tags", {}).items()}
-    qt = tags.get("com.apple.quicktime.creationdate") or tags.get("creation_time")   # iPhone: local time + offset
-    if qt:
-        fields["date_created"] = qt
-    if tags.get("location"):
-        fields["location"] = tags["location"]
+        from math import gcd
+        g = gcd(w, h) or 1
+        fields.update(width=w, height=h, resolution=f"{w}x{h}", aspect_ratio=f"{w // g}:{h // g}",
+                      orientation="portrait" if h > w else "landscape" if w > h else "square",
+                      codec=(im.format or "").lower() or None)
+        try:
+            ifd = ex.get_ifd(0x8769)
+            raw = ifd.get(0x9003) or ifd.get(0x9004)           # DateTimeOriginal / DateTimeDigitized
+            if raw:
+                off = ifd.get(0x9011) or ifd.get(0x9010)       # OffsetTimeOriginal
+                d = str(raw).strip()
+                d = f"{d[:4]}-{d[5:7]}-{d[8:10]}T{d[11:19]}" + (str(off).strip() if off else "")
+                if valid_date(d):
+                    fields["date_created"], fields["_date_source"] = d, "exif"
+        except Exception:
+            pass
+        try:
+            gps = ex.get_ifd(0x8825)
+            if gps.get(2) and gps.get(4):
+                fields["location"] = f"{_dms(gps[2], gps.get(1)):.5f},{_dms(gps[4], gps.get(3)):.5f}"
+        except Exception:
+            pass
     return fields
 
 
-def capture_date(path, media_type, probed):
-    """Real capture time. Prefer QuickTime/EXIF over file timestamps (iCloud/Photos stamps import time)."""
-    if probed:
-        return probed
-    if media_type == "image" and shutil.which("sips"):     # macOS: reads EXIF, handles HEIC
+# ---- videos: ffprobe
+def ffprobe_json(path):
+    if not shutil.which("ffprobe"):
+        raise RuntimeError("ffprobe not installed (winget install Gyan.FFmpeg, then reopen PowerShell)")
+    out = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
+                          "-show_streams", str(path)], capture_output=True, text=True, timeout=90,
+                         encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        raise RuntimeError("ffprobe could not read file: " + (out.stderr.strip()[:120] or "unknown error"))
+    return json.loads(out.stdout)
+
+
+def probe_ffprobe(path, media_type):
+    info = ffprobe_json(path)
+    v = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
+    if not v:
+        raise RuntimeError("no video stream found")
+    fields = {"has_audio": int(any(s.get("codec_type") == "audio" for s in info["streams"]))}
+    w, h = v.get("width"), v.get("height")
+    rot = 0
+    for sd in v.get("side_data_list", []) or []:
+        rot = int(sd.get("rotation", 0) or 0)
+    rot = int(v.get("tags", {}).get("rotate", rot) or rot)
+    if abs(rot) in (90, 270) and w and h:
+        w, h = h, w
+    if w and h:
+        from math import gcd
+        g = gcd(w, h)
+        fields.update(width=w, height=h, resolution=f"{w}x{h}", aspect_ratio=f"{w // g}:{h // g}",
+                      orientation="portrait" if h > w else "landscape" if w > h else "square")
+    fields["codec"] = v.get("codec_name")
+    if media_type == "video":
         try:
-            out = subprocess.run(["sips", "-g", "creation", str(path)], capture_output=True, text=True, timeout=30).stdout
-            m = re.search(r"creation:\s*(\d{4}):(\d\d):(\d\d) (\d\d:\d\d:\d\d)", out)
-            if m:
-                return f"{m[1]}-{m[2]}-{m[3]}T{m[4]}"
+            n, d = v.get("avg_frame_rate", "0/1").split("/")
+            fields["fps"] = round(float(n) / float(d), 2) if float(d) else None
         except Exception:
             pass
-    return None
+        dur = info.get("format", {}).get("duration")
+        if dur:
+            fields["duration"] = round(float(dur), 2)
+    tags = {k.lower(): val for k, val in info.get("format", {}).get("tags", {}).items()}
+    for key, src in (("com.apple.quicktime.creationdate", "quicktime"), ("creation_time", "container")):
+        if tags.get(key) and valid_date(tags[key]):
+            fields["date_created"], fields["_date_source"] = tags[key], src
+            break
+    loc = tags.get("com.apple.quicktime.location.iso6709") or tags.get("location")
+    if loc:
+        fields["location"] = loc
+    return fields
+
+
+def probe_media(path, media_type):
+    """Technical metadata + real capture date. Raises RuntimeError with a human reason on failure."""
+    if media_type == "video":
+        return probe_ffprobe(path, "video")
+    err = None
+    try:
+        f = probe_image(path)
+        if f.get("width"):
+            return f
+    except Exception as e:
+        err = str(e)
+    try:                                         # secondary route for formats Pillow lacks
+        f = probe_ffprobe(path, "image")
+        if f.get("width"):
+            return f
+    except RuntimeError:
+        pass
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".heic", ".heif") and not heic_supported():
+        raise RuntimeError("HEIC not supported: pillow-heif is missing (run setup_windows.ps1 or: pip install pillow-heif)")
+    raise RuntimeError("cannot read image (corrupt or unsupported): " + (err or "unknown").replace(str(path), "<file>"))
 
 
 def sync_fts(con, asset_id):
@@ -175,6 +309,83 @@ def sync_fts(con, asset_id):
                  r["subject"], r["description"], r["transcript"], r["environment"], r["file_name"]))
 
 
+# ---------------------------------------------------------------- environment checks / discovery
+def cmd_doctor(a):
+    ok = True
+    print(f"Python {sys.version.split()[0]} on {sys.platform}")
+    try:
+        Image, _ = pil()
+        import PIL
+        print(f"Pillow {PIL.__version__}: OK")
+    except RuntimeError as e:
+        print(f"Pillow: MISSING - {e}")
+        ok = False
+    try:
+        import pillow_heif
+        print(f"pillow-heif {pillow_heif.__version__}: OK (HEIC {'registered' if heic_supported() else 'NOT registered'})")
+        ok &= heic_supported()
+    except ImportError:
+        print("pillow-heif: MISSING - HEIC photos cannot be read (pip install pillow-heif)")
+        ok = False
+    for tool in ("ffprobe", "ffmpeg"):
+        p = shutil.which(tool)
+        print(f"{tool}: {p or 'MISSING - winget install Gyan.FFmpeg (then close and reopen PowerShell)'}")
+        ok &= bool(p)
+    print("\nAll good." if ok else "\nFix the MISSING items above, then run doctor again.")
+    sys.exit(0 if ok else 1)
+
+
+def count_media(root, cap=300000):
+    c = Counter()
+    n = 0
+    sizes = 0
+    for p, ext, st in iter_media([root], []):
+        n += 1
+        if n > cap:
+            c["capped"] = 1
+            break
+        c["video" if ext in VIDEO_EXT else "image"] += 1
+        if is_cloud_only(st):
+            c["cloud_only"] += 1
+        sizes += st.st_size
+    c["bytes"] = sizes
+    return c
+
+
+def cmd_detect(a):
+    """Find where the iPhone/iCloud/local media actually lives on this PC."""
+    home = Path.home()
+    od = [Path(os.environ[k]) for k in ("OneDrive", "OneDriveConsumer") if os.environ.get(k)]
+    cands = [home / "Pictures" / "iCloud Photos" / "Photos", home / "Pictures" / "iCloud Photos",
+             home / "iCloudPhotos" / "Photos", home / "iCloudDrive", home / "Pictures" / "Camera Roll",
+             home / "Pictures", home / "Videos", home / "Downloads", home / "Desktop", home / "Documents"]
+    for o in od:
+        cands += [o / "Pictures", o / "Pictures" / "Camera Roll"]
+    cands += [Path(x) for x in (a.also or [])]
+    seen, rows = set(), []
+    for c in cands:
+        key = os.path.normcase(str(c))
+        if key in seen or not c.is_dir():
+            continue
+        seen.add(key)
+        m = count_media(str(c))
+        rows.append((c, m))
+    if not rows:
+        print("No standard media folders found. Pass yours with: detect --also \"D:\\path\"")
+        return
+    print(f"{'FOLDER':<60} {'VIDEOS':>7} {'IMAGES':>7} {'CLOUD-ONLY':>11} {'SIZE GB':>8}")
+    for c, m in rows:
+        print(f"{str(c):<60} {m['video']:>7} {m['image']:>7} {m['cloud_only']:>11} {m['bytes'] / 1e9:>8.1f}"
+              + ("  (count capped)" if m["capped"] else ""))
+    print("\nFolders overlap (Pictures contains iCloud Photos, etc.): scan the most specific folder(s) that hold your footage.")
+    best = max(rows, key=lambda r: r[1]["video"] + r[1]["image"] if "iCloud" in str(r[0]) else 0)
+    if "iCloud" in str(best[0]):
+        print(f"Likely iPhone library: {best[0]}")
+    print("Compare TOTAL here with the photo+video count on your iPhone (Settings > General > About). A gap means")
+    print("iCloud has not downloaded everything (or those items are in a folder not listed). CLOUD-ONLY files are")
+    print("placeholders: right-click the folder > 'Always keep on this device' (or download in iCloud for Windows).")
+
+
 # ---------------------------------------------------------------- commands
 def cmd_init(a):
     con = connect(a, create=True)
@@ -184,91 +395,338 @@ def cmd_init(a):
     con.close()
 
 
-def cmd_scan(a):
-    """Incremental: only new/changed files are hashed and probed. Rows are never deleted."""
-    con = connect(a, create=True)
-    known = {r["file_path"]: r for r in con.execute("SELECT * FROM assets")}
-    seen, stats = set(), dict(scanned=0, new=0, changed=0, moved=0, unchanged=0, errors=0, icloud_not_downloaded=0)
-    t0 = time.time()
-    for src in a.sources:
-        for root, dirs, files in os.walk(Path(src).expanduser()):
-            dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS]
-            for fn in files:
-                if fn.startswith(".") and fn.endswith(".icloud"):    # iCloud placeholder: bytes not on disk
-                    stats["icloud_not_downloaded"] += 1
-                    continue
-                ext = Path(fn).suffix.lower()
-                if ext not in VIDEO_EXT | IMAGE_EXT or fn.startswith("."):
-                    continue
-                p = os.path.abspath(os.path.join(root, fn))
-                seen.add(p)
-                stats["scanned"] += 1
+def iter_media(sources, problems):
+    """Walk with scandir: file attributes come with the directory listing, so cloud-only files are never opened."""
+    for src in sources:
+        stack = [os.path.abspath(os.path.expanduser(str(src)))]
+        while stack:
+            d = stack.pop()
+            try:
+                it = os.scandir(d)
+            except OSError as e:
+                problems.append(f"cannot read folder {d}: {e.strerror}")
+                continue
+            with it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            if e.name.lower() not in SKIP_DIRS and not e.name.startswith("."):
+                                stack.append(e.path)
+                            continue
+                        ext = os.path.splitext(e.name)[1].lower()
+                        if ext in MEDIA_EXT and not e.name.startswith(("._", "~$")):
+                            yield e.path, ext, e.stat(follow_symlinks=False)
+                    except OSError as ex:
+                        problems.append(f"cannot stat {e.path}: {ex.strerror}")
+
+
+def ext_group(ext):
+    return {".jpeg": ".jpg", ".heif": ".heic", ".tif": ".tiff"}.get(ext, ext)
+
+
+def pick_test_sample(entries, n):
+    """~n assets mixing formats, sizes and years; a few cloud-only ones are included to exercise detection."""
+    rng = random.Random(42)
+    n = max(20, min(50, n))
+    cloud = [e for e in entries if is_cloud_only(e[2])]
+    local = [e for e in entries if not is_cloud_only(e[2])]
+    chosen = rng.sample(cloud, min(3, len(cloud)))
+    by_group = defaultdict(list)
+    for e in local:
+        by_group[ext_group(e[1])].append(e)
+    buckets = defaultdict(list)
+    for g, es in by_group.items():
+        sizes = sorted(e[2].st_size for e in es)
+        lo, hi = sizes[len(sizes) // 3], sizes[2 * len(sizes) // 3]
+        for e in es:
+            s = e[2].st_size
+            buckets[(g, 0 if s <= lo else 1 if s <= hi else 2, datetime.fromtimestamp(e[2].st_mtime).year)].append(e)
+    for b in buckets.values():
+        rng.shuffle(b)
+    keys = sorted(buckets)
+    while len(chosen) < n and any(buckets[k] for k in keys):
+        for k in keys:
+            if buckets[k] and len(chosen) < n:
+                chosen.append(buckets[k].pop())
+    return chosen
+
+
+def contact_sheet(lib, r):
+    """Windows-safe derivatives in the library folder: Pillow for images (incl. HEIC), ffmpeg for video frames."""
+    out = lib / "contact_sheets" / f"{r['asset_id']}.jpg"
+    if out.exists():
+        return str(out)
+    if r["availability"] == "cloud_only" or not os.path.exists(r["file_path"]):
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if r["media_type"] == "image":
+        try:
+            Image, ImageOps = pil()
+            with Image.open(r["file_path"]) as im:
                 try:
-                    st = os.stat(p)
-                    old = known.get(p)
-                    if old and old["size"] == st.st_size and abs((old["mtime"] or 0) - st.st_mtime) < 1:
-                        if old["status"] == "missing":
-                            con.execute("UPDATE assets SET status='probed' WHERE asset_id=?", (old["asset_id"],))
-                        stats["unchanged"] += 1
-                        continue
-                    mt = "video" if ext in VIDEO_EXT else "image"
-                    qh = quick_hash(p, st.st_size)
-                    fields = dict(file_name=fn, media_type=mt, size=st.st_size, mtime=st.st_mtime,
-                                  quick_hash=qh, date_modified=iso(st.st_mtime), indexed_at=now(),
-                                  date_created=iso(getattr(st, "st_birthtime", st.st_mtime)))
-                    fields.update(probe_fields(p, mt))
-                    fields["date_created"] = capture_date(p, mt, fields.get("date_created")) or fields["date_created"]
-                    if old:   # file changed in place: keep id, drop stale analysis flag
-                        fields["status"] = "probed"
-                        sets = ",".join(f"{k}=?" for k in fields)
-                        con.execute(f"UPDATE assets SET {sets} WHERE asset_id=?", (*fields.values(), old["asset_id"]))
-                        stats["changed"] += 1
-                        continue
-                    moved = con.execute("SELECT asset_id,file_path FROM assets WHERE quick_hash=? AND size=?",
-                                        (qh, st.st_size)).fetchall()
-                    gone = [m for m in moved if not os.path.exists(m["file_path"])]
-                    if gone:  # same file at a new path: keep its analysis
-                        con.execute("UPDATE assets SET file_path=?,file_name=?,status=CASE WHEN analysed_at "
-                                    "IS NULL THEN 'probed' ELSE 'analysed' END WHERE asset_id=?",
-                                    (p, fn, gone[0]["asset_id"]))
-                        stats["moved"] += 1
-                        sync_fts(con, gone[0]["asset_id"])
-                        continue
+                    im.draft("RGB", (1440, 1440))
+                except Exception:
+                    pass
+                im = ImageOps.exif_transpose(im)
+                im.thumbnail((720, 720))
+                im.convert("RGB").save(out, "JPEG", quality=85)
+        except Exception:
+            out.unlink(missing_ok=True)
+    if not out.exists() and shutil.which("ffmpeg"):
+        if r["media_type"] == "video":
+            d = max(r["duration"] or 1, 1)
+            vf = f"fps=4/{d},scale=360:-2,tile=4x1:padding=2"
+        else:
+            vf = "scale=720:-2"
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", vf, "-frames:v", "1",
+                            str(out)], capture_output=True, timeout=180)
+        except Exception:
+            pass
+    return str(out) if out.exists() and out.stat().st_size > 0 else None
+
+
+def index_file(con, known, p, ext, st, lib, stats, thumbs):
+    fn = os.path.basename(p)
+    old = known.get(os.path.normcase(p))
+    mt = "video" if ext in VIDEO_EXT else "image"
+    base = dict(file_name=fn, media_type=mt, size=st.st_size, mtime=st.st_mtime,
+                date_modified=iso(st.st_mtime), indexed_at=now())
+    try:
+        if is_cloud_only(st):                       # CLOUD_ONLY / NOT_DOWNLOADED: never opened, never "indexed"
+            stats["cloud_only"] += 1
+            if old:
+                con.execute("UPDATE assets SET availability='cloud_only', status=CASE WHEN status='analysed' "
+                            "THEN status ELSE 'cloud_only' END WHERE asset_id=?", (old["asset_id"],))
+            else:
+                f = dict(base, file_path=p, status="cloud_only", availability="cloud_only")
+                con.execute(f"INSERT INTO assets({','.join(f)}) VALUES ({','.join('?' * len(f))})", tuple(f.values()))
+            return
+        stats["local"] += 1
+        if old and old["status"] not in ("cloud_only", "error") and old["size"] == st.st_size \
+                and abs((old["mtime"] or 0) - st.st_mtime) < 1:
+            upd = {}
+            if old["status"] == "missing":
+                upd["status"] = "analysed" if old["analysed_at"] else "probed"
+            if old["availability"] != "local":
+                upd["availability"] = "local"
+            if upd:
+                con.execute(f"UPDATE assets SET {','.join(k + '=?' for k in upd)} WHERE asset_id=?",
+                            (*upd.values(), old["asset_id"]))
+            stats["unchanged"] += 1
+            aid = old["asset_id"]
+        else:
+            if st.st_size == 0:
+                raise RuntimeError("zero-byte file (download incomplete?)")
+            fields = dict(base, quick_hash=quick_hash(p, st.st_size), availability="local", error=None)
+            fields.update(probe_media(p, mt))
+            src = fields.pop("_date_source", None)
+            dt = parse_dt(fields.get("date_created"))
+            if dt:
+                fields["date_created"] = dt.isoformat(timespec="seconds")
+            else:
+                fields["date_created"], src = iso(st.st_mtime), "file_time"    # last resort, flagged as such
+            fields["date_source"] = src
+            if mt == "video" and (fields.get("duration") or 99) <= LIVE_PHOTO_MAX_S:
+                stem = os.path.splitext(p)[0]
+                if any(os.path.exists(stem + e2) or os.path.exists(stem + e2.upper()) for e2 in (".heic", ".jpg", ".jpeg")):
+                    fields["extra"] = json.dumps({"live_photo_pair": True})
+            if old:
+                was_cloud = old["status"] == "cloud_only"
+                fields["status"] = "probed"
+                con.execute(f"UPDATE assets SET {','.join(k + '=?' for k in fields)} WHERE asset_id=?",
+                            (*fields.values(), old["asset_id"]))
+                stats["now_available" if was_cloud else "changed"] += 1
+                aid = old["asset_id"]
+            else:
+                qh = fields["quick_hash"]
+                moved = con.execute("SELECT asset_id,file_path FROM assets WHERE quick_hash=? AND size=?",
+                                    (qh, st.st_size)).fetchall()
+                gone = [m for m in moved if not os.path.exists(m["file_path"])]
+                if gone:                            # same bytes at a new path: keep its analysis
+                    aid = gone[0]["asset_id"]
+                    con.execute("UPDATE assets SET file_path=?,file_name=?,availability='local',status=CASE WHEN "
+                                "analysed_at IS NULL THEN 'probed' ELSE 'analysed' END WHERE asset_id=?", (p, fn, aid))
+                    stats["moved"] += 1
+                else:
                     fields.update(file_path=p, status="probed")
-                    cols = ",".join(fields)
-                    cur = con.execute(f"INSERT INTO assets({cols}) VALUES ({','.join('?' * len(fields))})",
+                    cur = con.execute(f"INSERT INTO assets({','.join(fields)}) VALUES ({','.join('?' * len(fields))})",
                                       tuple(fields.values()))
-                    if moved:  # identical bytes already indexed at a live path
+                    aid = cur.lastrowid
+                    if moved:
                         con.execute("UPDATE assets SET duplicate_status='exact_duplicate', duplicate_of=? "
-                                    "WHERE asset_id=?", (moved[0]["asset_id"], cur.lastrowid))
+                                    "WHERE asset_id=?", (moved[0]["asset_id"], aid))
                     stats["new"] += 1
-                    sync_fts(con, cur.lastrowid)
-                except Exception as e:
-                    stats["errors"] += 1
-                    con.execute("INSERT INTO assets(file_path,file_name,status,error,indexed_at) VALUES(?,?,?,?,?) "
-                                "ON CONFLICT(file_path) DO UPDATE SET status='error',error=excluded.error",
-                                (p, fn, "error", str(e), now()))
-    # Flag (never delete) rows whose files vanished from the scanned roots.
-    roots = tuple(os.path.abspath(str(Path(s).expanduser())) for s in a.sources)
+            sync_fts(con, aid)
+        if thumbs:
+            r = con.execute("SELECT * FROM assets WHERE asset_id=?", (aid,)).fetchone()
+            if r["status"] in ("probed", "analysed"):
+                tp = contact_sheet(lib, r)
+                if tp:
+                    stats["thumbnails_created"] += 1
+                    con.execute("UPDATE assets SET thumb_path=? WHERE asset_id=?", (tp, aid))
+    except Exception as e:
+        stats["errors"] += 1
+        stats["error_reasons"][str(e)[:90]] += 1
+        msg = str(e)
+        if old:
+            con.execute("UPDATE assets SET status='error', error=?, availability='local' WHERE asset_id=?",
+                        (msg, old["asset_id"]))
+        else:
+            f = dict(base, file_path=p, status="error", error=msg)
+            con.execute(f"INSERT INTO assets({','.join(f)}) VALUES ({','.join('?' * len(f))})", tuple(f.values()))
+
+
+def cmd_scan(a):
+    """Incremental: only new/changed/newly-downloaded files are hashed and probed. Rows are never deleted."""
+    sources = [os.path.abspath(os.path.expanduser(s)) for s in a.sources]
+    bad = [s for s in sources if not os.path.isdir(s)]
+    if bad:
+        sys.exit("Folder not found: " + "; ".join(bad) + "\nRun `detect` to find your library.")
+    base = base_dir(a)
+    marker = base / "test_passed.json"
+    if not a.test and not a.skip_test:
+        try:
+            ok_src = {os.path.normcase(s) for s in json.loads(marker.read_text(encoding="utf-8"))["sources"]}
+        except Exception:
+            ok_src = set()
+        if not {os.path.normcase(s) for s in sources} <= ok_src:
+            sys.exit("Run the test first, and only scan everything after it passes:\n"
+                     f"  scan --test {' '.join(chr(34) + s + chr(34) for s in sources)}")
+    if a.test:
+        shutil.rmtree(lib_dir(a), ignore_errors=True)       # our own derived test data only
+    con = connect(a, create=True)
+    lib = lib_dir(a)
+    problems = []
+    t0 = time.time()
+    print("Listing files (no file contents are read)...", file=sys.stderr)
+    entries = list(iter_media(sources, problems))
+    whole = dict(found=len(entries), cloud=sum(1 for e in entries if is_cloud_only(e[2])))
+    if a.test:
+        entries = pick_test_sample(entries, a.sample)
+    known = {os.path.normcase(r["file_path"]): r for r in con.execute("SELECT * FROM assets")}
+    stats = dict(found=len(entries), local=0, cloud_only=0, new=0, changed=0, now_available=0, moved=0,
+                 unchanged=0, errors=0, thumbnails_created=0, error_reasons=Counter())
+    seen = set()
+    for i, (p, ext, st) in enumerate(entries, 1):
+        seen.add(os.path.normcase(p))
+        index_file(con, known, p, ext, st, lib, stats, a.thumbs or a.test)
+        if i % 200 == 0:
+            con.commit()                                   # resumable: Ctrl+C then re-run continues
+            print(f"  {i}/{len(entries)} processed ({time.time() - t0:.0f}s)", file=sys.stderr)
     missing = 0
-    for p, r in known.items():
-        cur = con.execute("SELECT file_path FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()
-        if cur["file_path"] == p and p.startswith(roots) and p not in seen and r["status"] != "missing":
-            con.execute("UPDATE assets SET status='missing' WHERE asset_id=?", (r["asset_id"],))
-            missing += 1
+    if not a.test and not problems:                         # never flag missing on a partial walk
+        roots = tuple(os.path.normcase(s).rstrip("\\/") + os.sep for s in sources)
+        for key, r in known.items():
+            cur = con.execute("SELECT file_path,status FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()
+            if os.path.normcase(cur["file_path"]) == key and key.startswith(roots) and key not in seen \
+                    and cur["status"] != "missing":
+                con.execute("UPDATE assets SET status='missing' WHERE asset_id=?", (r["asset_id"],))
+                missing += 1
     con.commit()
     assign_sessions(con)
     mark_near_duplicates(con)
     con.commit()
-    print(json.dumps({**stats, "missing_flagged": missing, "seconds": round(time.time() - t0, 1)}))
+    secs = round(time.time() - t0, 1)
+    if a.test:
+        return test_report(con, stats, whole, problems, sources, marker, secs)
+    out = {k: v for k, v in stats.items() if k != "error_reasons"}
+    out.update(missing_flagged=missing, seconds=secs, whole_source_found=whole["found"])
+    if stats["errors"]:
+        out["error_reasons"] = dict(stats["error_reasons"])
+    if problems:
+        out["unreadable"] = problems[:10]
+    print(json.dumps(out))
+    if stats["cloud_only"]:
+        print(f"\n{stats['cloud_only']} files are CLOUD_ONLY / NOT_DOWNLOADED: not indexed. Download them "
+              "(File Explorer > right-click folder > Always keep on this device), then re-run scan.")
+
+
+def test_report(con, stats, whole, problems, sources, marker, secs):
+    q = lambda s: con.execute(s).fetchone()[0]
+    idx = "status IN ('probed','analysed')"
+    indexed = q(f"SELECT COUNT(*) FROM assets WHERE {idx}")
+    meta = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND resolution IS NOT NULL AND (media_type='image' OR duration IS NOT NULL)")
+    dates = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND date_source IN ('exif','quicktime','container')")
+    heic = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND lower(file_name) GLOB '*.hei[cf]'")
+    vids = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND media_type='video'")
+    fmts = Counter(os.path.splitext(r[0])[1].lower() for r in con.execute(f"SELECT file_name FROM assets WHERE {idx}"))
+    ori = Counter(r[0] for r in con.execute(f"SELECT orientation FROM assets WHERE {idx} AND orientation IS NOT NULL"))
+    yrs = sorted({(r[0] or "")[:4] for r in con.execute(f"SELECT date_created FROM assets WHERE {idx}") if r[0]})
+    sz = con.execute(f"SELECT MIN(size),MAX(size) FROM assets WHERE {idx}").fetchone()
+    local = stats["local"]
+    print("PRESKI LIBRARY SCAN TEST (sample only; nothing deleted/moved/modified)")
+    print(f"TOTAL FOUND:              {stats['found']}   (whole source folder(s): {whole['found']}, of which cloud-only {whole['cloud']})")
+    print(f"LOCALLY AVAILABLE:        {local}")
+    print(f"CLOUD ONLY:               {stats['cloud_only']}   <- CLOUD_ONLY / NOT_DOWNLOADED, not indexed, never opened")
+    print(f"SUCCESSFULLY INDEXED:     {indexed}")
+    print(f"FAILED:                   {stats['errors']}")
+    print(f"THUMBNAILS CREATED:       {stats['thumbnails_created']}")
+    print(f"METADATA EXTRACTED:       {meta}")
+    print(f"CAPTURE DATES FOUND:      {dates}   (from EXIF/QuickTime; {indexed - dates} fell back to file time)")
+    print(f"HEIC FILES PROCESSED:     {heic}")
+    print(f"VIDEO FILES PROCESSED:    {vids}")
+    print(f"\nMix: formats {dict(fmts)} | orientation {dict(ori)} | capture years {yrs[:1] + yrs[-1:] if yrs else []} | "
+          f"size {sz[0] / 1e6:.1f}-{sz[1] / 1e6:.1f} MB" if indexed else "\nNothing indexed.")
+    for reason, n in stats["error_reasons"].most_common(5):
+        print(f"  FAILED x{n}: {reason}")
+    for pr in problems[:5]:
+        print(f"  WARNING: {pr}")
+    warns = []
+    for want, label in ((heic, "HEIC"), (vids, "video")):
+        if not want:
+            warns.append(f"no {label} file was successfully processed in the sample (none in the source, all cloud-only, or all failed)")
+    if len(ori) < 2 and indexed > 5:
+        warns.append("only one orientation seen in the sample")
+    if not heic_supported() and any(f in fmts for f in (".heic", ".heif")):
+        warns.append("pillow-heif missing")
+    fails = []
+    if indexed == 0:
+        fails.append("nothing was indexed")
+    if local and stats["errors"] / local > 0.10:
+        fails.append(f"{stats['errors']} of {local} local files failed (more than 10%)")
+    elif stats["errors"]:
+        warns.append(f"{stats['errors']} file(s) failed (rare corrupt/incomplete files are tolerated; they are listed in `report`)")
+    by_fmt = defaultdict(lambda: [0, 0])                    # ext group -> [ok, failed]
+    for r in con.execute("SELECT file_name,status FROM assets WHERE availability='local'"):
+        g = by_fmt[ext_group(os.path.splitext(r[0])[1].lower())]
+        g[0 if r[1] in ("probed", "analysed") else 1] += 1
+    for g, (ok_n, bad_n) in by_fmt.items():
+        if bad_n and not ok_n and bad_n >= 2:
+            fails.append(f"every {g} file failed ({bad_n}); format not supported on this machine")
+    if indexed and stats["thumbnails_created"] < indexed:
+        fails.append("thumbnails could not be created for some indexed files")
+    if indexed and meta < indexed:
+        fails.append("some indexed files have no resolution/duration")
+    native = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND lower(file_name) GLOB '*.[hm][eo][iv]*'")
+    native_dates = q(f"SELECT COUNT(*) FROM assets WHERE {idx} AND lower(file_name) GLOB '*.[hm][eo][iv]*' "
+                     "AND date_source IN ('exif','quicktime','container')")
+    if native and native_dates < 0.9 * native:
+        fails.append("HEIC/MOV files are missing their capture dates (metadata extraction not working)")
+    if indexed and dates < 0.5 * indexed:
+        warns.append("under half the sample has a metadata capture date (screenshots/PNGs and edited files often don't)")
+    for w in warns:
+        print(f"  NOTE: {w}")
+    if fails:
+        print("\nTEST FAILED: " + "; ".join(fails) + ". Fix the above (run `doctor`) and re-run the test. Full scan is blocked.")
+        marker.unlink(missing_ok=True)
+        sys.exit(1)
+    marker.write_text(json.dumps({"sources": sources, "passed_at": now(), "sample": stats["found"],
+                                  "indexed": indexed}), encoding="utf-8")
+    print(f"\nTEST PASSED in {secs}s. Next: run the same command without --test to index everything.")
+    print(f"Test thumbnails: {lib_dir_of(marker) / '_test' / 'contact_sheets'}")
+
+
+def lib_dir_of(marker):
+    return marker.parent
 
 
 def mark_near_duplicates(con):
     """Cheap candidates only (same duration +-0.3s, resolution, within a session). Needs visual confirmation
     to promote to similar_shot / different_take / different_angle - never auto-deleted either way."""
     rows = con.execute("SELECT asset_id,duration,resolution,session_id FROM assets WHERE media_type='video' "
-                       "AND duration IS NOT NULL AND status NOT IN ('missing','error') AND duplicate_status IS NULL "
-                       "ORDER BY resolution,duration").fetchall()
+                       "AND duration IS NOT NULL AND status NOT IN ('missing','error','cloud_only') "
+                       "AND duplicate_status IS NULL ORDER BY resolution,duration").fetchall()
     for i, r in enumerate(rows):
         for q in rows[i + 1:i + 6]:
             if q["resolution"] == r["resolution"] and abs(q["duration"] - r["duration"]) <= 0.3 \
@@ -278,58 +736,42 @@ def mark_near_duplicates(con):
 
 
 def assign_sessions(con):
-    """Group clips shot within 45 min of each other into one session (workout/event)."""
-    rows = con.execute("SELECT asset_id,date_created,session_id FROM assets WHERE date_created IS NOT NULL "
-                       "AND status NOT IN ('error') ORDER BY date_created").fetchall()
+    """Group clips shot within 45 min of each other into one session (workout/event), by capture time."""
+    rows = []
+    for r in con.execute("SELECT asset_id,date_created,session_id FROM assets WHERE date_created IS NOT NULL "
+                         "AND status IN ('probed','analysed')"):
+        d = parse_dt(r["date_created"])
+        if d:
+            rows.append((d.timestamp(), r))
+    rows.sort(key=lambda x: x[0])
     prev, sid, n = None, None, 0
-    for r in rows:
-        try:
-            t = datetime.fromisoformat(r["date_created"].replace("Z", "+00:00")).timestamp()
-        except ValueError:
-            continue
+    for t, r in rows:
         if prev is None or t - prev > SESSION_GAP_S:
             n += 1
-            sid = f"S{r['date_created'][:10].replace('-', '')}-{n:05d}"
+            sid = f"S{r['date_created'][:10].replace('-', '').replace(':', '')}-{n:05d}"
         prev = t
         if r["session_id"] != sid:
             con.execute("UPDATE assets SET session_id=? WHERE asset_id=?", (sid, r["asset_id"]))
 
 
-def contact_sheet(lib, r):
-    out = lib / "contact_sheets" / f"{r['asset_id']}.jpg"
-    if out.exists() or not (shutil.which("ffmpeg") or shutil.which("sips")):
-        return str(out) if out.exists() else None
-    if r["media_type"] == "video":
-        d = max(r["duration"] or 1, 1)
-        vf = f"fps=4/{d},scale=360:-2,tile=4x1:padding=2"
-        cmd = ["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", vf, "-frames:v", "1", str(out)]
-    else:
-        cmd = ["ffmpeg", "-v", "error", "-y", "-i", r["file_path"], "-vf", "scale=720:-2", "-frames:v", "1", str(out)]
-    try:
-        if shutil.which("ffmpeg"):
-            subprocess.run(cmd, capture_output=True, timeout=120)
-        if not out.exists() and r["media_type"] == "image" and shutil.which("sips"):   # HEIC on macOS
-            subprocess.run(["sips", "-s", "format", "jpeg", "-Z", "720", r["file_path"], "--out", str(out)],
-                           capture_output=True, timeout=60)
-    except Exception:
-        return None
-    return str(out) if out.exists() else None
-
-
 def cmd_pending(a):
     """Assets still needing visual analysis, with a contact-sheet image for Claude to look at."""
     con = connect(a)
-    q = ("SELECT * FROM assets WHERE status='probed' AND NOT (duplicate_status='exact_duplicate' AND "
-         "duplicate_of IN (SELECT asset_id FROM assets WHERE status!='missing'))")
+    q = ("SELECT * FROM assets WHERE status='probed' AND availability='local' "
+         "AND (extra IS NULL OR extra NOT LIKE '%live_photo_pair%') "
+         "AND (duplicate_status IS NOT 'exact_duplicate' OR "      # IS NOT: NULL-safe (plain != drops every NULL row)
+         "duplicate_of NOT IN (SELECT asset_id FROM assets WHERE status!='missing'))")
+    args = []
     if a.session:
-        q += " AND session_id=" + repr(a.session)
-    rows = con.execute(q + " ORDER BY date_created DESC LIMIT ?", (a.limit,)).fetchall()
+        q += " AND session_id=?"
+        args.append(a.session)
+    rows = con.execute(q + " ORDER BY date_created DESC LIMIT ?", (*args, a.limit)).fetchall()
     out = []
     for r in rows:
         out.append({"asset_id": r["asset_id"], "file_name": r["file_name"], "media_type": r["media_type"],
                     "duration": r["duration"], "orientation": r["orientation"], "has_audio": r["has_audio"],
-                    "date_created": r["date_created"], "session_id": r["session_id"],
-                    "contact_sheet": contact_sheet(lib_dir(a), r)})
+                    "date_created": r["date_created"], "date_source": r["date_source"],
+                    "session_id": r["session_id"], "contact_sheet": contact_sheet(lib_dir(a), r)})
     print(json.dumps(out, indent=1))
 
 
@@ -337,7 +779,7 @@ def cmd_annotate(a):
     """Upsert analysis from JSONL: {asset_id|file_path, <fields>, tags:[...]}. Only evidenced fields."""
     con = connect(a)
     n = bad = 0
-    for line in (sys.stdin if a.file == "-" else open(a.file)):
+    for line in (sys.stdin if a.file == "-" else open(a.file, encoding="utf-8-sig")):
         line = line.strip()
         if not line:
             continue
@@ -455,6 +897,8 @@ def run_search(con, query, limit=10, media=None, min_visual=None, include_dupes=
 
 def fmt_hit(i, s, r, why):
     d = f"{r['duration']:.0f}s" if r["duration"] else r["media_type"]
+    if r["availability"] == "cloud_only":
+        d += ", CLOUD_ONLY / NOT_DOWNLOADED"
     return (f"{i}. Clip {r['asset_id']} — {s}/10  [{d}, {r['orientation'] or '?'}]  "
             f"{(r['description'] or r['activity'] or r['file_name'])[:90]}\n"
             f"   {r['file_path']}\n   why: {', '.join(why)} | visual {r['visual_quality_score']} "
@@ -485,7 +929,7 @@ def cmd_search(a):
 def cmd_match_script(a):
     """Each non-empty line of the script file -> top clips that visually support that line."""
     con = connect(a)
-    text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text()
+    text = sys.stdin.read() if a.file == "-" else Path(a.file).read_text(encoding="utf-8-sig")
     lines = [l.strip() for l in re.split(r"(?<=[.!?])\s+|\n+", text) if l.strip()]
     out = []
     for i, line in enumerate(lines, 1):
@@ -522,43 +966,64 @@ def cmd_status(a):
 
 def cmd_report(a):
     con = connect(a)
-    one = lambda q: con.execute(q).fetchone()[0]
-    live = "status NOT IN ('missing','error')"
+
+    def one(sql):
+        return con.execute(sql).fetchone()[0]
+
+    live = "status IN ('probed','analysed')"
     fit = "status='analysed' AND category IS NOT NULL AND category NOT IN ('other','lifestyle','b-roll')"
+    rows = [
+        ("TOTAL ASSETS FOUND", f"SELECT COUNT(*) FROM assets WHERE status!='missing'"),
+        ("TOTAL ASSETS INDEXED (local)", f"SELECT COUNT(*) FROM assets WHERE {live}"),
+        ("CLOUD_ONLY / NOT_DOWNLOADED", "SELECT COUNT(*) FROM assets WHERE availability='cloud_only' AND status!='missing'"),
+        ("TOTAL VIDEO ASSETS", f"SELECT COUNT(*) FROM assets WHERE media_type='video' AND {live}"),
+        ("TOTAL IMAGE ASSETS", f"SELECT COUNT(*) FROM assets WHERE media_type='image' AND {live}"),
+        ("TOTAL FITNESS ASSETS", f"SELECT COUNT(*) FROM assets WHERE {fit}"),
+        ("TOTAL TALKING-HEAD ASSETS", "SELECT COUNT(*) FROM assets WHERE talking_head=1"),
+        ("TOTAL CARDIO ASSETS", "SELECT COUNT(*) FROM assets WHERE status='analysed' AND (category='cardio' OR "
+                                "asset_id IN (SELECT asset_id FROM tags WHERE tag='cardio'))"),
+        ("TOTAL TRAINING ASSETS", "SELECT COUNT(*) FROM assets WHERE status='analysed' AND category='training'"),
+        ("TOTAL HIGH-POTENTIAL (>=8)", "SELECT COUNT(*) FROM assets WHERE content_potential_score>=8"),
+        ("DUPLICATES / NEAR-DUPLICATES", "SELECT COUNT(*) FROM assets WHERE duplicate_status IS NOT NULL"),
+    ]
     print("CONTENT LIBRARY INTELLIGENCE REPORT")
-    print(f"TOTAL ASSETS SCANNED:        {one(f'SELECT COUNT(*) FROM assets WHERE {live}')}")
-    print(f"TOTAL VIDEO ASSETS:          {one(f'SELECT COUNT(*) FROM assets WHERE media_type=\"video\" AND {live}')}")
-    print(f"TOTAL IMAGE ASSETS:          {one(f'SELECT COUNT(*) FROM assets WHERE media_type=\"image\" AND {live}')}")
-    print(f"TOTAL FITNESS ASSETS:        {one(f'SELECT COUNT(*) FROM assets WHERE {fit}')}")
-    print(f"TOTAL TALKING-HEAD ASSETS:   {one('SELECT COUNT(*) FROM assets WHERE talking_head=1')}")
-    print(f"TOTAL CARDIO ASSETS:         {one('SELECT COUNT(*) FROM assets WHERE status=\"analysed\" AND (category=\"cardio\" OR asset_id IN (SELECT asset_id FROM tags WHERE tag=\"cardio\"))')}")
-    print(f"TOTAL TRAINING ASSETS:       {one('SELECT COUNT(*) FROM assets WHERE status=\"analysed\" AND category=\"training\"')}")
-    print(f"TOTAL HIGH-POTENTIAL (>=8):  {one('SELECT COUNT(*) FROM assets WHERE content_potential_score>=8')}")
-    print(f"DUPLICATES / NEAR-DUPLICATES:{one('SELECT COUNT(*) FROM assets WHERE duplicate_status IS NOT NULL'):>4}")
+    for label, sql in rows:
+        print(f"{label + ':':<34}{one(sql)}")
     print("\nTOP CONTENT CATEGORIES")
-    for r in con.execute("SELECT category,COUNT(*) c FROM assets WHERE category IS NOT NULL GROUP BY category ORDER BY c DESC LIMIT 8"):
+    for r in con.execute("SELECT category,COUNT(*) c FROM assets WHERE category IS NOT NULL GROUP BY category "
+                         "ORDER BY c DESC LIMIT 8"):
         print(f"  {r['category']:<14} {r['c']}")
     print("\nTOP HIGH-POTENTIAL FOOTAGE")
-    for r in con.execute("SELECT asset_id,description,exercise,content_potential_score p,visual_quality_score v FROM assets "
-                         "WHERE content_potential_score IS NOT NULL ORDER BY p DESC,v DESC LIMIT 10"):
-        print(f"  Clip {r['asset_id']} — potential {r['p']} / visual {r['v']} — {r['exercise'] or ''} {r['description'] or ''}"[:140])
+    for r in con.execute("SELECT asset_id,description,exercise,content_potential_score p,visual_quality_score v "
+                         "FROM assets WHERE content_potential_score IS NOT NULL ORDER BY p DESC,v DESC LIMIT 10"):
+        print(f"  Clip {r['asset_id']} - potential {r['p']} / visual {r['v']} - {r['exercise'] or ''} {r['description'] or ''}"[:140])
     st = {r["status"]: r["c"] for r in con.execute("SELECT status,COUNT(*) c FROM assets GROUP BY status")}
     print("\nINDEX STATUS")
     print(f"  analysed {st.get('analysed', 0)} | awaiting analysis {st.get('probed', 0)} | "
-          f"missing from disk {st.get('missing', 0)} | errors {st.get('error', 0)}")
+          f"cloud-only {st.get('cloud_only', 0)} | missing from disk {st.get('missing', 0)} | errors {st.get('error', 0)}")
+    ds = Counter(r[0] or "none" for r in con.execute(f"SELECT date_source FROM assets WHERE {live}"))
+    print(f"  capture date source: {dict(ds)}  (file_time = no metadata date, less reliable for sessions)")
+    lp = one("SELECT COUNT(*) FROM assets WHERE extra LIKE '%live_photo_pair%'")
+    if lp:
+        print(f"  {lp} Live Photo companion clips (indexed, not analysed separately)")
     for r in con.execute("SELECT file_path,error FROM assets WHERE status='error' LIMIT 20"):
         print(f"  ERROR {r['file_path']}: {r['error']}")
-    nm = one("SELECT COUNT(*) FROM assets WHERE status NOT IN ('error') AND media_type='video' AND duration IS NULL")
-    if nm:
-        print(f"  {nm} videos have no technical metadata (ffprobe missing or unreadable)")
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--lib", help="library folder (default $CLIL_LIB or ~/preski-library)")
+    p.add_argument("--lib", help="library folder (default $CLIL_LIB or %%USERPROFILE%%\\preski-library)")
     sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("doctor").set_defaults(fn=cmd_doctor)
+    s = sub.add_parser("detect"); s.add_argument("--also", nargs="*", help="extra folders to check")
+    s.set_defaults(fn=cmd_detect)
     sub.add_parser("init").set_defaults(fn=cmd_init)
-    s = sub.add_parser("scan"); s.add_argument("sources", nargs="+"); s.set_defaults(fn=cmd_scan)
+    s = sub.add_parser("scan"); s.add_argument("sources", nargs="+")
+    s.add_argument("--test", action="store_true", help="index a 20-50 asset sample into a separate test library")
+    s.add_argument("--sample", type=int, default=40, help="test sample size (20-50)")
+    s.add_argument("--thumbs", action="store_true", help="also create thumbnails during the scan")
+    s.add_argument("--skip-test", action="store_true", help="bypass the must-pass-test gate")
+    s.set_defaults(fn=cmd_scan)
     s = sub.add_parser("pending"); s.add_argument("--limit", type=int, default=20)
     s.add_argument("--session"); s.set_defaults(fn=cmd_pending)
     s = sub.add_parser("annotate"); s.add_argument("file", help="JSONL file or - for stdin"); s.set_defaults(fn=cmd_annotate)
