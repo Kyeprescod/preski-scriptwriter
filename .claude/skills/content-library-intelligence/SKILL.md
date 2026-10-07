@@ -24,12 +24,18 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `detect [--also dir]` | find media folders on this PC with counts incl. cloud-only |
 | `init` | create library folder + SQLite DB (FTS5 search index) |
 | `scan [--test] [--thumbs] <folders...>` | incremental: new/changed files only (path+size+mtime), sampled hash, ffprobe metadata, session grouping, exact/near-dupe flags, moved-file tracking, missing-file flagging. Safe to re-run daily |
+| `fetch "<topic>" [--limit N --dry-run --reserve-gb G]` / `fetch --ids ...` | **Windows.** Search tagged footage and download only the matching clips that are cloud-only (same as right-click *Always keep on this device*), with a disk-space guard (default keeps 60 GB spare). Prints the ready-to-use paths |
+| `download --since D --until D [--type video] [--limit N] [--dry-run]` | Pull a batch of *untagged* cloud-only clips by file date so they can be scanned then tagged |
+| `free --analysed --yes` / `free --ids ...` | Release disk space for clips already tagged (same as *Free up space*). Never deletes; iCloud keeps originals. Without `--yes` it only previews |
 | `pending --limit N [--session S]` | JSON of probed-but-unanalysed assets with a contact-sheet image path each |
 | `annotate <file.jsonl\|->` | upsert analysis (see below), updates search index |
 | `search "<natural language>" [--limit --type --min-visual --same-session --json]` | ranked retrieval with semantic expansion (`references/taxonomy.json`) |
 | `match-script <file\|->` | per-sentence ranked clips for a voiceover script (JSON) |
 | `mark-used <project> <ids...>` | usage_count / last_used so footage can be rotated |
 | `sessions`, `dupes`, `status`, `report` | inspection and the final report |
+
+## Fetching footage on demand (Windows)
+Search only knows clips that have been tagged, and tagging needs the file on the PC. So: (1) `download` a batch, `scan`, tag it with `pending`/`annotate`, then `free --analysed --yes` to give the space back; (2) later, `fetch "<topic>"` re-downloads just the winning clips when Kye wants to edit. Always `--dry-run` first for big fetches, show the GB, and never run `free` without `--yes` being asked for. `download`/`fetch`/`free` only flip the iCloud pinned flags via `attrib`; they never modify or delete file content. If `fetch` says no tagged footage matches, say how many cloud-only clips are still untagged.
 
 ## Windows + iCloud setup (Kye's machine: ASUS VivoBook, Windows; iPhone -> iCloud Photos)
 Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\Pictures\iCloud Photos\Photos`) and local folders -> `clil.py` -> `library.db`.

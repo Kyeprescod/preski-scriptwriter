@@ -11,7 +11,7 @@ NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are 
 attributes and never opened (opening one would make iCloud download it). Everything generated lives
 in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: doctor detect init scan pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
 """
 import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
 from collections import Counter, defaultdict
@@ -755,6 +755,156 @@ def lib_dir_of(marker):
     return marker.parent
 
 
+# ---------------------------------------------------------------- on-demand download / free up space (Windows)
+def pin(path, on=True):
+    """Same as File Explorer's 'Always keep on this device' (on) / 'Free up space' (off). Uses the Windows
+    `attrib` pinned/unpinned flags; file CONTENT is never touched, and iCloud keeps the original either way."""
+    if os.name != "nt":
+        raise RuntimeError("download/free only work on Windows (they drive the iCloud placeholder flags)")
+    flags = ["+P", "-U"] if on else ["-P", "+U"]
+    r = subprocess.run(["attrib", *flags, path], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError((r.stdout + r.stderr).strip()[:120] or "attrib failed")
+
+
+def wait_local(paths, timeout_s, label="downloading"):
+    """Poll until every file is no longer a placeholder. Returns the paths that arrived."""
+    t0 = time.time()
+    pending = list(paths)
+    done = []
+    last = 0
+    while pending and time.time() - t0 < timeout_s:
+        still = []
+        for pth in pending:
+            try:
+                if is_cloud_only(os.stat(pth)):
+                    still.append(pth)
+                else:
+                    done.append(pth)
+            except OSError:
+                still.append(pth)
+        pending = still
+        if pending:
+            if time.time() - last > 15:
+                print(f"  {label}: {len(done)}/{len(done) + len(pending)} arrived ({int(time.time() - t0)}s)", file=sys.stderr)
+                last = time.time()
+            time.sleep(2)
+    return done
+
+
+def hydrate(con, rows, a):
+    """Download the cloud-only rows (with a disk-space guard), wait, and record availability."""
+    targets = [r for r in rows if r["availability"] == "cloud_only"]
+    already = len(rows) - len(targets)
+    need = sum(r["size"] or 0 for r in targets)
+    free = shutil.disk_usage(os.path.expanduser("~")).free
+    reserve = a.reserve_gb * 1e9
+    print(f"{len(rows)} clips selected: {already} already on this PC, {len(targets)} to download "
+          f"({need / 1e9:.1f} GB; {free / 1e9:.0f} GB free, keeping {a.reserve_gb:.0f} GB spare)")
+    if not targets:
+        return [r["file_path"] for r in rows]
+    fits = need <= free - reserve
+    if a.dry_run:
+        for r in targets[:30]:
+            print(f"  would download Clip {r['asset_id']}: {r['file_path']} ({(r['size'] or 0) / 1e6:.0f} MB)")
+        print("Dry run only: nothing was downloaded." + ("" if fits else " NOTE: this would NOT fit in free disk space."))
+        return []
+    if not fits:
+        sys.exit("Not enough free disk space for that many. Lower --limit, free up space "
+                 "(`free --analysed --yes`), or reduce --reserve-gb.")
+    failed = []
+    for r in targets:
+        try:
+            pin(r["file_path"], True)
+        except Exception as e:
+            failed.append((r["file_path"], str(e)))
+    arrived = wait_local([r["file_path"] for r in targets if r["file_path"] not in {f[0] for f in failed}], a.timeout)
+    got = set(arrived)
+    for r in targets:
+        if r["file_path"] in got:
+            con.execute("UPDATE assets SET availability='local' WHERE asset_id=?", (r["asset_id"],))
+    con.commit()
+    print(f"Downloaded {len(arrived)}/{len(targets)}." + (f" Still downloading in the background: {len(targets) - len(arrived) - len(failed)}"
+          if len(arrived) + len(failed) < len(targets) else ""))
+    for pth, err in failed[:5]:
+        print(f"  FAILED {pth}: {err}")
+    return [r["file_path"] for r in rows if r["availability"] == "local" or r["file_path"] in got]
+
+
+def cmd_fetch(a):
+    """Download the footage that matches a theme/topic, or specific clip ids."""
+    con = connect(a)
+    if a.ids:
+        marks = ",".join("?" * len(a.ids))
+        rows = con.execute(f"SELECT * FROM assets WHERE asset_id IN ({marks})", a.ids).fetchall()
+        scores = {}
+    else:
+        if not a.query:
+            sys.exit('Give a topic: fetch "walking for fat loss"  (or --ids 12 40 77)')
+        res = run_search(con, a.query, a.limit, a.type)
+        rows = [r for _, r, _ in res]
+        scores = {r["asset_id"]: s for s, r, _ in res}
+        if not rows:
+            n = con.execute("SELECT COUNT(*) FROM assets WHERE status='cloud_only'").fetchone()[0]
+            sys.exit(f"No tagged footage matches. {n} clips are still cloud-only and untagged, so they can't be "
+                     "searched yet: use `download --since/--until` to pull a batch, scan, then tag it.")
+    paths = hydrate(con, rows, a)
+    if paths and not a.dry_run:
+        print("\nReady to use:")
+        for r in rows:
+            print(f"  Clip {r['asset_id']}" + (f" - {scores[r['asset_id']]}/10" if r["asset_id"] in scores else "")
+                  + f"  {r['file_path']}")
+
+
+def cmd_download(a):
+    """Pull a batch of untagged cloud-only clips (by date added/modified) so they can be scanned and tagged."""
+    con = connect(a)
+    q = "SELECT * FROM assets WHERE status='cloud_only' AND availability='cloud_only'"
+    args = []
+    if a.type:
+        q += " AND media_type=?"
+        args.append(a.type)
+    if a.since:
+        q += " AND date_modified>=?"
+        args.append(a.since)
+    if a.until:
+        q += " AND date_modified<=?"
+        args.append(a.until + "T23:59:59")
+    rows = con.execute(q + " ORDER BY date_modified DESC LIMIT ?", (*args, a.limit)).fetchall()
+    if not rows:
+        sys.exit("Nothing matches: no untagged cloud-only clips in that range.")
+    print("Placeholders only carry the file's date, which may differ slightly from the real capture date.")
+    hydrate(con, rows, a)
+    if not a.dry_run:
+        print("\nNext: scan the folder again (indexes them), then tag the batch with Claude Code.")
+
+
+def cmd_free(a):
+    """Release disk space for clips already analysed. Never deletes: iCloud keeps the originals."""
+    con = connect(a)
+    if a.ids:
+        marks = ",".join("?" * len(a.ids))
+        rows = con.execute(f"SELECT * FROM assets WHERE asset_id IN ({marks}) AND availability='local'", a.ids).fetchall()
+    elif a.analysed:
+        rows = con.execute("SELECT * FROM assets WHERE status='analysed' AND availability='local'").fetchall()
+    else:
+        sys.exit("Say what to free: --analysed (everything already tagged) or --ids 1 2 3")
+    rows = [r for r in rows if os.path.exists(r["file_path"])]
+    gb = sum(r["size"] or 0 for r in rows) / 1e9
+    print(f"{len(rows)} analysed clips would be freed (~{gb:.1f} GB). They stay in iCloud and in the library.")
+    if not a.yes:
+        print("Nothing changed. Add --yes to go ahead.")
+        return
+    ok = 0
+    for r in rows:
+        try:
+            pin(r["file_path"], False)
+            ok += 1
+        except Exception as e:
+            print(f"  FAILED {r['file_path']}: {e}", file=sys.stderr)
+    print(f"Freed {ok}/{len(rows)}. Windows releases the space shortly; the next scan updates the library.")
+
+
 def mark_near_duplicates(con):
     """Cheap candidates only (same duration +-0.3s, resolution, within a session). Needs visual confirmation
     to promote to similar_shot / different_take / different_angle - never auto-deleted either way."""
@@ -1070,6 +1220,21 @@ def main():
     s.add_argument("--per", type=int, default=5); s.set_defaults(fn=cmd_match_script)
     s = sub.add_parser("mark-used"); s.add_argument("project"); s.add_argument("ids", nargs="+", type=int)
     s.set_defaults(fn=cmd_mark_used)
+    s = sub.add_parser("fetch", help="download footage matching a topic (cloud-only clips only)")
+    s.add_argument("query", nargs="?"); s.add_argument("--ids", nargs="+", type=int)
+    s.add_argument("--limit", type=int, default=10); s.add_argument("--type", choices=["video", "image"])
+    for sp in (s,):
+        sp.add_argument("--reserve-gb", type=float, default=60); sp.add_argument("--timeout", type=int, default=600)
+        sp.add_argument("--dry-run", action="store_true")
+    s.set_defaults(fn=cmd_fetch)
+    s = sub.add_parser("download", help="download a batch of untagged clips by date so they can be tagged")
+    s.add_argument("--since", help="YYYY-MM-DD"); s.add_argument("--until", help="YYYY-MM-DD")
+    s.add_argument("--type", choices=["video", "image"]); s.add_argument("--limit", type=int, default=50)
+    s.add_argument("--reserve-gb", type=float, default=60); s.add_argument("--timeout", type=int, default=900)
+    s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_download)
+    s = sub.add_parser("free", help="free disk space for clips that are already tagged (never deletes)")
+    s.add_argument("--analysed", action="store_true"); s.add_argument("--ids", nargs="+", type=int)
+    s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
     sub.add_parser("dupes").set_defaults(fn=cmd_dupes)
     sub.add_parser("status").set_defaults(fn=cmd_status)
     sub.add_parser("report").set_defaults(fn=cmd_report)
