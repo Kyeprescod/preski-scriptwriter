@@ -11,7 +11,7 @@ NON-DESTRUCTIVE: source folders are only ever READ. Cloud-only placeholders are 
 attributes and never opened (opening one would make iCloud download it). Everything generated lives
 in the library folder (--lib / $CLIL_LIB / ~/preski-library).
 
-Commands: doctor detect folders init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
+Commands: doctor detect folders prune init scan fetch download free pending annotate sessions search match-script mark-used dupes report status
 """
 import argparse, hashlib, json, os, random, re, shutil, sqlite3, subprocess, sys, time
 from collections import Counter, defaultdict
@@ -1192,6 +1192,26 @@ def cmd_folders(a):
     print("Exclude junk folders with:  scan \"<root>\" --exclude \"<part of folder path>\"")
 
 
+def cmd_prune(a):
+    """Hide everything in the index that is NOT under the folders you want to keep. Reversible: nothing on disk is
+    touched, tagged (analysed) clips are never hidden, and re-scanning a folder brings its files back."""
+    con = connect(a)
+    keep = tuple(os.path.normcase(os.path.abspath(os.path.expanduser(k))).rstrip("\\/") + os.sep for k in a.keep)
+    rows = con.execute("SELECT asset_id,file_path,status FROM assets "
+                       "WHERE status IN ('probed','cloud_only','skipped','error')").fetchall()
+    out = [r for r in rows if not os.path.normcase(r["file_path"]).startswith(keep)]
+    kept = len(rows) - len(out)
+    by = Counter(r["status"] for r in out)
+    print(f"Keeping {kept} files under {len(keep)} folder(s). Hiding {len(out)} others "
+          f"({dict(by)}). Tagged clips are never hidden.")
+    if not a.yes:
+        print("Nothing changed. Add --yes to apply.")
+        return
+    con.executemany("UPDATE assets SET status='excluded' WHERE asset_id=?", [(r["asset_id"],) for r in out])
+    con.commit()
+    print("Done. Re-scan any folder later to bring its files back.")
+
+
 def cmd_status(a):
     con = connect(a)
     for r in con.execute("SELECT status,COUNT(*) c FROM assets GROUP BY status"):
@@ -1289,6 +1309,8 @@ def main():
     s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_free)
     sub.add_parser("dupes").set_defaults(fn=cmd_dupes)
     sub.add_parser("status").set_defaults(fn=cmd_status)
+    s = sub.add_parser("prune", help="hide indexed files outside the folders you keep")
+    s.add_argument("--keep", nargs="+", required=True); s.add_argument("--yes", action="store_true"); s.set_defaults(fn=cmd_prune)
     s = sub.add_parser("folders"); s.add_argument("--top", type=int, default=20)
     s.add_argument("--by", choices=["total", "nodate", "dupes", "video", "cloud"], default="total"); s.set_defaults(fn=cmd_folders)
     sub.add_parser("report").set_defaults(fn=cmd_report)
