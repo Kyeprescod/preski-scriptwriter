@@ -36,6 +36,9 @@ You are the intelligence layer between raw footage and the other Preski skills. 
 | `mark-used <project> <ids...>` | usage_count / last_used so footage can be rotated |
 | `sessions`, `dupes`, `status`, `report` | inspection and the final report |
 
+## Showcase footage (what Kye wants first)
+Prioritise finding and tagging his most impressive clips: weighted L-sit chin-ups, single-arm dumbbell press, clap push-ups, boxing, ripped physique shots. Tag them `showcase` per `references/scoring.md`, then `collect "impressive" --min-score 7 --name showcase` (or per exercise) so the best clips sit in one folder with a manifest. Show Kye the top 10 and let his eye pick the final cut.
+
 ## Tag and collect in one go (what Kye asks for)
 When Kye says "tag and collect" (or names a theme/video idea): (1) `pending` with sensible filters (type video, portrait, recent) -> read contact sheets -> `annotate` the batch; (2) immediately `collect "<theme>" --limit 15 --dry-run`, show the ranked list with why each was picked, and ask for a yes; (3) run `collect` without `--dry-run` (add `--free-after` if disk is tight); (4) report the folder path and call out gaps (themes with too few good clips, so he knows what to film). Never move or edit originals; collect only copies.
 

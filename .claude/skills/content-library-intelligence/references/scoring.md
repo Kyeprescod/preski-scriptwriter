@@ -34,3 +34,10 @@ Camera steadiness across the 4 contact-sheet frames: tripod-steady 9-10, minor h
 - Named exercise needs visible evidence (equipment + movement). Otherwise tag the muscle group or activity only.
 - Cardio covers walking pad, treadmill, incline, running, cycling, skipping, swimming, boxing/conditioning.
 - Physique: shirtless/flexing/mirror/progress shots. Tag `lean` only if it genuinely looks lean.
+
+## Showcase clips ("most impressive")
+Kye wants his most impressive footage surfaced first (for the website, hooks and reels). When tagging, add the tag `showcase` (and `impressive`) to a clip ONLY when the contact sheet clearly shows one of:
+- an advanced or rare skill: weighted L-sit chin-ups, single-arm dumbbell press, clap push-ups, muscle-ups, handstands, heavy weighted work
+- boxing / conditioning with real intensity
+- a standout physique shot (genuinely lean and defined, flexing or posing)
+Also tag the specific exercise (e.g. `weighted l-sit chin-up`) only when equipment and movement are both visible. Give `hook_potential_score` 7+ only if the first frame alone would stop a scroll. Do not add `showcase` to ordinary training clips, and never to a clip whose technique looks sloppy.
