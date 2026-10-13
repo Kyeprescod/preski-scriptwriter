@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Apply for Coaching | Preski Fitness</title>
+<meta name="description" content="Apply for 1:1 online coaching with Kye Prescod. Get in shape and get shredded at home.">
+<meta property="og:title" content="Preski Fitness — Get shredded at home">
+<meta property="og:description" content="1:1 online coaching and home training plans. Grab the free 3-Day Fat Loss Kickstart.">
+<meta property="og:image" content="assets/img/hero-flex.jpg">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#040E22">
+<link rel="icon" href="assets/img/logo.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<nav class="nav" aria-label="Main">
+  <div class="wrap">
+    <a class="wordmark" href="./">Preski<span>Fitness</span></a>
+    <ul class="nav-links">
+      <li><a href="./#results">Results</a></li>
+      <li><a href="./#guide">Free guide</a></li>
+      <li><a href="./#options">Coaching</a></li>
+      <li><a href="plan.html">8-week plan</a></li>
+    </ul>
+    <a class="btn btn--red nav-apply" href="apply.html">Apply</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="mobile-menu" aria-label="Open menu"><span></span><span></span><span></span></button>
+  </div>
+  <div class="mobile-menu" id="mobile-menu" hidden><a href="./#results">Results</a><a href="./#guide">Free guide</a><a href="./#options">Coaching</a><a href="plan.html">8-week plan</a><a class="btn btn--red btn--block" href="apply.html">Apply for coaching</a></div>
+</nav>
+
+<header class="page-hero">
+  <div class="wrap">
+    <span class="eyebrow">1:1 Online Coaching · Application</span>
+    <h1>Let's see if we're <span class="red">a good fit</span></h1>
+    <p class="lede">Three short steps, about three minutes. I read every application myself and reply within 48 hours.</p>
+  </div>
+</header>
+
+<section class="band">
+  <div class="wrap split">
+    <form class="apply-card dark-form" id="apply-form" name="coaching-application" method="post" novalidate>
+      <p class="hp" aria-hidden="true"><label for="a-fax">Leave this empty</label><input id="a-fax" name="contact_me_by_fax_only" tabindex="-1" autocomplete="off"></p>
+      <div class="progress" aria-hidden="true"><span></span><span></span><span></span></div>
+
+      <fieldset class="fieldset">
+        <legend>Your goal</legend>
+        <div class="field"><span class="label" id="goal-l">What do you want most?</span>
+          <div class="choices" role="radiogroup" aria-labelledby="goal-l">
+            <label class="choice"><input type="radio" name="goal" value="Lose fat" id="goal-1" required><span>Lose fat</span></label>
+            <label class="choice"><input type="radio" name="goal" value="Build muscle" id="goal-2"><span>Build muscle</span></label>
+            <label class="choice"><input type="radio" name="goal" value="Get shredded (both)" id="goal-3"><span>Get shredded (both)</span></label>
+            <label class="choice"><input type="radio" name="goal" value="Get fit and strong" id="goal-4"><span>Get fit and strong</span></label>
+          </div>
+        </div>
+        <div class="field"><label for="why">Why now? What's changed?</label><textarea class="textarea" id="why" name="why" required placeholder="e.g. Holiday in June, sick of starting and stopping, want to feel confident again"></textarea></div>
+        <div class="field"><span class="label" id="level-l">Training experience</span>
+          <div class="choices" role="radiogroup" aria-labelledby="level-l">
+            <label class="choice"><input type="radio" name="experience" value="Complete beginner" id="exp-1" required><span>Complete beginner</span></label>
+            <label class="choice"><input type="radio" name="experience" value="Some experience, inconsistent" id="exp-2"><span>Some experience, inconsistent</span></label>
+            <label class="choice"><input type="radio" name="experience" value="Train regularly, stuck" id="exp-3"><span>Train regularly, stuck</span></label>
+            <label class="choice"><input type="radio" name="experience" value="Advanced" id="exp-4"><span>Advanced</span></label>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" hidden>
+        <legend>Your setup</legend>
+        <div class="field"><label for="kit">What equipment do you have at home?</label><input class="input" id="kit" name="equipment" required placeholder="e.g. Nothing yet / dumbbells / pull-up bar / resistance bands"></div>
+        <div class="field"><span class="label" id="days-l">Days a week you can train</span>
+          <div class="choices" role="radiogroup" aria-labelledby="days-l">
+            <label class="choice"><input type="radio" name="days" value="2-3" id="days-1" required><span>2–3 days</span></label>
+            <label class="choice"><input type="radio" name="days" value="4" id="days-2"><span>4 days</span></label>
+            <label class="choice"><input type="radio" name="days" value="5+" id="days-3"><span>5+ days</span></label>
+            <label class="choice"><input type="radio" name="days" value="Not sure" id="days-4"><span>Not sure yet</span></label>
+          </div>
+        </div>
+        <div class="field"><label for="stats">Age, height and weight (roughly)</label><input class="input" id="stats" name="stats" placeholder="e.g. 29, 5'10, 88 kg"></div>
+        <div class="field"><label for="blocker">What's stopped you before?</label><textarea class="textarea" id="blocker" name="blocker" placeholder="Be honest. This helps me build a plan you'll stick to."></textarea></div>
+      </fieldset>
+
+      <fieldset class="fieldset" hidden>
+        <legend>Last bit</legend>
+        <div class="field"><span class="label" id="invest-l">Coaching is <span data-price="coachingMonthly">£149</span> <span data-price="coachingNote">per month</span>. Are you ready to invest in it?</span>
+          <div class="choices" role="radiogroup" aria-labelledby="invest-l">
+            <label class="choice"><input type="radio" name="investment" value="Yes, ready to start" id="inv-1" required><span>Yes, ready to start</span></label>
+            <label class="choice"><input type="radio" name="investment" value="Yes, in the next month" id="inv-2"><span>Yes, in the next month</span></label>
+            <label class="choice"><input type="radio" name="investment" value="Not right now" id="inv-3"><span>Not right now (show me the £39 plan)</span></label>
+          </div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label for="a-name">First name</label><input class="input" id="a-name" name="name" required autocomplete="given-name"></div>
+          <div class="field"><label for="a-email">Email</label><input class="input" id="a-email" name="email" type="email" required autocomplete="email" inputmode="email"></div>
+        </div>
+        <div class="row-2">
+          <div class="field"><label for="a-ig">Instagram or TikTok handle</label><input class="input" id="a-ig" name="instagram" placeholder="@yourhandle"></div>
+          <div class="field"><label for="a-phone">WhatsApp number (optional)</label><input class="input" id="a-phone" name="phone" type="tel" autocomplete="tel"></div>
+        </div>
+        <label class="consent" for="a-consent"><input type="checkbox" id="a-consent" name="consent" value="yes" required> <span>I'm happy for Preski Fitness to contact me about coaching and send training emails. I can unsubscribe any time. <a href="privacy.html">Privacy policy</a>.</span></label>
+      </fieldset>
+
+      <p class="form-msg" role="alert" aria-live="assertive"></p>
+      <div class="apply-nav">
+        <button class="btn btn--ghost" type="button" id="apply-back">← Back</button>
+        <button class="btn btn--red" type="button" id="apply-next">Next <span class="arrow">→</span></button>
+        <button class="btn btn--red" type="submit" id="apply-submit">Send my application</button>
+      </div>
+    </form>
+
+    <aside style="display:grid;gap:20px;align-content:start">
+      <img src="assets/img/before-after.jpg" alt="Kye before and after" width="900" height="900" loading="lazy" style="border-radius:6px">
+      <ul class="ticks">
+        <li>Plan built for your space and kit</li>
+        <li>Calorie and protein targets that fit your life</li>
+        <li>Weekly check-ins and adjustments</li>
+        <li>Form reviews and direct messaging</li>
+      </ul>
+      <p class="fine">Not ready for coaching? The <a href="plan.html">8-Week Home Shred Programme</a> is <span data-price="plan">£39</span>.</p>
+    </aside>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="wrap">
+    <img src="assets/img/logo.jpg" alt="Preski Fitness Personal Training logo" width="840" height="680" loading="lazy">
+    <div>
+      <p>Follow me on all socials, and join my lives most nights.</p>
+      <div class="socials" style="margin-top:12px">
+        <a data-social="instagram" href="#">Instagram</a>
+        <a data-social="tiktok" href="#">TikTok</a>
+        <a data-social="youtube" href="#">YouTube</a>
+        <a data-social="snapchat" href="#">Snapchat</a>
+      </div>
+    </div>
+    <div class="footer-links">
+      <a href="privacy.html">Privacy</a>
+      <span>© <span id="year">2026</span> Preski Fitness</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/config.js"></script>
+<script src="assets/js/main.js"></script>
+<script src="assets/js/chat.js"></script>
+</body>
+</html>

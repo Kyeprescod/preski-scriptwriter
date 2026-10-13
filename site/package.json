@@ -1,0 +1,16 @@
+{
+  "name": "preski-fitness-site",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Preski Fitness website: static pages + serverless functions (forms, free guides, checkout, plan delivery, chat). No runtime dependencies.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node e2e/mobile.e2e.mjs",
+    "dev:mock": "DEV_MOCK=1 PORT=8890 node scripts/dev-server.mjs"
+  }
+}
