@@ -1209,14 +1209,15 @@ def stem(w):
 
 def expand_query(q):
     """-> (literal_terms, expanded_terms). Phrases from the taxonomy are matched as a whole first."""
-    ql = q.lower().replace("’", "'")
+    ql = q.lower().replace("’", "'").replace("-", " ")        # 'single-arm' == 'single arm'
     concepts = TAXONOMY["concepts"]
     literal, expanded = [], {}
     names = set(concepts) | set(TAXONOMY["exercise_to_muscle"]) | {v for c in concepts.values() for v in c}
     for ph in sorted(names, key=len, reverse=True):
-        if re.search(rf"(?<![\w-]){re.escape(ph)}(?![\w-])", ql):
+        pat = rf"(?<![\w]){re.escape(ph.replace('-', ' '))}s?(?![\w])"      # plural 'clap push-ups' matches too
+        if re.search(pat, ql):
             literal.append(ph)
-            ql = re.sub(rf"(?<![\w-]){re.escape(ph)}(?![\w-])", " ", ql)
+            ql = re.sub(pat, " ", ql)
     literal += [w for w in re.findall(r"[a-z0-9'-]+", ql) if w not in STOP and len(w) > 2]
     for t in literal:
         for rel in concepts.get(t, []):
