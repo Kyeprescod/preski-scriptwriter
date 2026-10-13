@@ -1214,7 +1214,10 @@ def expand_query(q):
     literal, expanded = [], {}
     names = set(concepts) | set(TAXONOMY["exercise_to_muscle"]) | {v for c in concepts.values() for v in c}
     for ph in sorted(names, key=len, reverse=True):
-        pat = rf"(?<![\w]){re.escape(ph.replace('-', ' '))}s?(?![\w])"      # plural 'clap push-ups' matches too
+        base = ph.replace("-", " ")
+        if base.endswith("s") and len(base) > 4:
+            base = base[:-1]                                               # 'shoulders' also matches 'shoulder'
+        pat = rf"(?<![\w]){re.escape(base)}s?(?![\w])"                    # and 'clap push-ups' matches 'clap push-up'
         if re.search(pat, ql):
             literal.append(ph)
             ql = re.sub(pat, " ", ql)
