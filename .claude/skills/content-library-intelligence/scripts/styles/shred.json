@@ -1,0 +1,17 @@
+{
+  "name": "shred",
+  "note": "Preski default: punchy, high-contrast, big word-by-word captions. Edit freely; a /watch analysis of a reference video should be translated into these numbers.",
+  "width": 1080, "height": 1920, "fps": 30,
+  "min_shot": 1.2, "max_shot": 3.2,
+  "punch_every": 2, "punch_zoom": 1.10,
+  "grade": "eq=contrast=1.10:saturation=1.15:brightness=0.01,unsharp=5:5:0.6",
+  "font": "Arial", "caption_size": 96, "caption_lines_words": 3,
+  "caption_color": "&H00FFFFFF", "highlight_color": "&H001F5AFF", "outline_color": "&H00000000",
+  "caption_outline": 7, "caption_y": 1180,
+  "hook_size": 84, "hook_seconds": 2.6, "hook_y": 380,
+  "progress_bar": true, "accent_hex": "FF5A1F",
+  "cta_seconds": 2.8, "cta_size": 78, "cta_y": 1500,
+  "voice_loudnorm": "loudnorm=I=-14:TP=-1.5:LRA=11",
+  "music_volume": 0.10,
+  "face_open_seconds": 2.5, "face_close_seconds": 2.0
+}

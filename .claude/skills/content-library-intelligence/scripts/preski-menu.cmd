@@ -62,6 +62,7 @@ echo   6  Send SHOWCASE clips to my phone ^(most impressive, tagged^)
 echo   7  Send clips on a topic to my phone ^(e.g. talking head, jogging^)
 echo   8  Change photos folder
 echo   9  OPEN CLIPS ON MY PHONE   ^(shows the link; phone must be on the same Wi-Fi^)
+echo  10  MAKE A VIDEO from my voiceover ^(uses my tagged clips, adds captions + graphics^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -81,6 +82,7 @@ if "%C%"=="6" call :run collect "impressive" --min-score 7 --name showcase --des
 if "%C%"=="7" call :collect
 if "%C%"=="8" call :findsrc
 if "%C%"=="9" call :share
+if "%C%"=="10" call :make
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -109,6 +111,33 @@ exit /b 0
 set "Q="
 set /p Q=What are you looking for?
 if defined Q call :run search "%Q%" --limit 10
+exit /b 0
+
+:make
+echo.
+echo Drag your voiceover or sit-down video file into this window, then press Enter.
+set "V="
+set /p V=File:
+if not defined V exit /b 0
+set "V=%V:"=%"
+set "HOOK="
+set /p HOOK=On-screen hook for the first 2 seconds ^(Enter to skip^):
+set "CTA="
+set /p CTA=Call-to-action at the end, e.g. COMMENT ABS FOR THE FREE PLAN ^(Enter to skip^):
+set "SCR="
+set /p SCR=Script text file for exact captions ^(Enter to let Whisper listen^):
+%PY% -c "import faster_whisper" >nul 2>nul
+if errorlevel 1 if not defined SCR (
+  echo Installing the speech-to-text library once ^(a few minutes^)...
+  %PY% -m pip install --quiet faster-whisper
+)
+set "ARGS="
+if defined HOOK set ARGS=%ARGS% --hook "%HOOK%"
+if defined CTA set ARGS=%ARGS% --cta "%CTA%"
+if defined SCR set ARGS=%ARGS% --script "%SCR:"=%"
+%PY% "%HERE%editor.py" make "%V%" --lib "%LIB%" %ARGS% --out "%PHONE%\finished\video_%RANDOM%.mp4"
+echo.
+echo Finished videos are in %PHONE%\finished - open menu 9 to watch them on your phone.
 exit /b 0
 
 :share
