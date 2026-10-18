@@ -1,0 +1,7 @@
+You are running unattended on Kye's laptop. Use the content-library-intelligence skill to tag clips.
+Do exactly this and nothing else:
+1. Run the clil.py pending command with --type video --limit 30 (use the python and clil.py path given below).
+2. For every item, Read its contact_sheet image. Judge ONLY what is visible. Leave unknown fields out. Follow references/scoring.md (including the showcase rules) and references/taxonomy.json.
+3. Write one JSON line per asset to a file inside the autotag folder given below, then run clil.py annotate on that file.
+4. Print one line: "tagged N, M still waiting".
+Never delete, move, rename or edit any original photo/video. Do not create content. Do not touch any file outside the library folder and the autotag folder. Stop after one batch.

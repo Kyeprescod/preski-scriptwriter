@@ -55,6 +55,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Automatic nightly run:** after one successful menu scan, double-click `scripts\preski-schedule.cmd` once. Windows then runs `preski-nightly.cmd` at 02:00 (scan new clips + one harvest batch + report, logged to `<lib>\nightly.log`). Laptop must be on.
 
+**Automatic tagging:** `scripts\preski-schedule-tagging.cmd` (run once) makes Windows run `preski-autotag.cmd` every 30 min while the laptop is on. Each run checks `pending` first, then `claude -p` tags 30 videos from contact sheets via `autotag-prompt.txt`; max 8 runs/day (240 clips); on any Claude error (e.g. usage limit) it pauses until the next day. Log: `<lib>\autotag.log`. Untested on Windows.
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):
