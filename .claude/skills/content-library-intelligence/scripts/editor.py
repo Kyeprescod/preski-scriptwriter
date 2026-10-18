@@ -146,6 +146,17 @@ def find_clips(lib, text, limit=6):
     return [x for x in rows if x.get("file_path") and os.path.exists(x["file_path"])]
 
 
+def parse_overlays(items):
+    out = []
+    for it in items or []:
+        f = it.rsplit(":", 5) if not re.match(r"^[A-Za-z]:[\\/]", it) else None
+        if f is None:  # Windows path with a drive letter: split from the right
+            f = it.rsplit(":", 5)
+        file, s, e, x, y, w = f
+        out.append({"file": file, "start": float(s), "end": float(e), "x": x, "y": y, "w": int(w)})
+    return out
+
+
 def plan_edit(a):
     st = load_style(a.style)
     voice = Path(a.voice)
@@ -188,7 +199,8 @@ def plan_edit(a):
                          clip_start=round(max(0.0, (cd - need) / 2), 2))
     plan = {"voice": str(voice.resolve()), "duration": duration, "has_face": face, "style": st,
             "words": words, "beats": beats, "hook": a.hook, "cta": a.cta,
-            "music": str(Path(a.music).resolve()) if a.music else None}
+            "music": str(Path(a.music).resolve()) if a.music else None,
+            "labels": st.get("labels", []), "overlays": parse_overlays(a.overlay)}
     out = Path(a.out or (Path("finished") / (voice.stem + ".mp4"))).with_suffix(".plan.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(plan, indent=1), encoding="utf-8")
@@ -215,11 +227,17 @@ def build_ass(plan, path):
            (st["font"], st["hook_size"], st["outline_color"], st["caption_outline"]),
            "Style: Cta,%s,%d,%s,%s,%s,&H64000000,-1,0,0,0,100,100,0,0,1,%d,3,5,70,70,0,1" %
            (st["font"], st["cta_size"], st["caption_color"], st["highlight_color"], st["outline_color"], st["caption_outline"]),
+           "Style: Wm,%s,%d,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,5,10,10,0,1" %
+           (st["font"], (st.get("watermark") or {}).get("size", 30)),
+           "Style: Label,%s,%d,&H00FFFFFF,&H00FFFFFF,%s,&H64000000,-1,0,0,0,100,100,0,0,1,5,2,5,10,10,0,1" %
+           (st["font"], st.get("label_size", 72), st["outline_color"]),
            "", "[Events]", "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text"]
     ev = []
     ws = plan["words"]
     k = st["caption_lines_words"]
-    clean = lambda w: w.upper().replace("{", "(").replace("}", ")").replace("\\", "")
+    mode = st.get("caption_mode", "word")
+    upper = st.get("caption_upper", True)
+    clean = lambda w: (w.upper() if upper else w).replace("{", "(").replace("}", ")").replace("\\", "")
 
     def wrap(text, width):
         lines, cur = [], ""
@@ -230,19 +248,44 @@ def build_ass(plan, path):
             else:
                 cur = (cur + " " + w).strip()
         return "\\N".join(lines + [cur])
-    for li in range(0, len(ws), k):
-        line = ws[li:li + k]
-        nxt = ws[li + k]["s"] if li + k < len(ws) else plan["duration"]
-        for j, w in enumerate(line):
-            s = w["s"]
-            e = line[j + 1]["s"] if j + 1 < len(line) else min(nxt, max(w["e"] + 0.25, s + 0.2))
-            parts = []
-            for q, x in enumerate(line):
-                t = clean(x["w"])
-                parts.append(("{\\c%s\\fscx112\\fscy112}%s{\\c%s\\fscx100\\fscy100}" %
-                              (st["highlight_color"], t, st["caption_color"])) if q == j else t)
-            ev.append("Dialogue: 0,%s,%s,Cap,,0,0,0,,{\\an5\\pos(%d,%d)}%s" %
-                      (ass_time(s), ass_time(e), W // 2, st["caption_y"], " ".join(parts)))
+    if mode == "phrase":  # clean lower-case phrase captions, no highlight (long-form explainer look)
+        phrases, cur = [], []
+        for i, w in enumerate(ws):
+            cur.append(w)
+            gap = (ws[i + 1]["s"] - w["e"]) if i + 1 < len(ws) else 9
+            if w["w"][-1:] in ",.?!;:" or gap > 0.35 or len(cur) >= k:
+                phrases.append(cur)
+                cur = []
+        if cur:
+            phrases.append(cur)
+        for i, ph in enumerate(phrases):
+            s0 = ph[0]["s"]
+            e0 = phrases[i + 1][0]["s"] if i + 1 < len(phrases) else plan["duration"]
+            e0 = min(e0, ph[-1]["e"] + 0.5)
+            ev.append("Dialogue: 0,%s,%s,Cap,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(60,60)}%s" %
+                      (ass_time(s0), ass_time(e0), W // 2, st["caption_y"], " ".join(clean(x["w"]) for x in ph)))
+    else:
+        for li in range(0, len(ws), k):
+            line = ws[li:li + k]
+            nxt = ws[li + k]["s"] if li + k < len(ws) else plan["duration"]
+            for j, w in enumerate(line):
+                s = w["s"]
+                e = line[j + 1]["s"] if j + 1 < len(line) else min(nxt, max(w["e"] + 0.25, s + 0.2))
+                parts = []
+                for q, x in enumerate(line):
+                    t = clean(x["w"])
+                    parts.append(("{\\c%s\\fscx112\\fscy112}%s{\\c%s\\fscx100\\fscy100}" %
+                                  (st["highlight_color"], t, st["caption_color"])) if q == j else t)
+                ev.append("Dialogue: 0,%s,%s,Cap,,0,0,0,,{\\an5\\pos(%d,%d)}%s" %
+                          (ass_time(s), ass_time(e), W // 2, st["caption_y"], " ".join(parts)))
+    wm = st.get("watermark")
+    if wm and wm.get("text"):
+        ev.append("Dialogue: 2,%s,%s,Wm,,0,0,0,,{\\an5\\pos(%d,%d)\\alpha&H40&}%s" %
+                  (ass_time(0), ass_time(plan["duration"]), wm["x"], wm["y"], wm["text"]))
+    for lb in plan.get("labels", []):  # e.g. the LOSE FAT / BUILD MUSCLE headers
+        ev.append("Dialogue: 2,%s,%s,Label,,0,0,0,,{\\an5\\pos(%d,%d)\\c%s\\fad(150,100)}%s" %
+                  (ass_time(lb.get("start", 0)), ass_time(lb.get("end", plan["duration"])), lb["x"], lb["y"],
+                   lb.get("color", "&H00FFFFFF"), clean(lb["text"]).replace("\n", "\\N")))
     if plan.get("hook"):
         ev.append("Dialogue: 1,%s,%s,Hook,,0,0,0,,{\\an5\\pos(%d,%d)\\fad(120,200)}%s" %
                   (ass_time(0), ass_time(st["hook_seconds"]), W // 2, st["hook_y"], wrap(plan["hook"], 16)))
@@ -299,12 +342,29 @@ def render(plan_path, out=None):
         if st.get("progress_bar"):
             vfs.append("drawbox=x=0:y=ih-14:w='iw*t/%.3f':h=14:color=0x%s@0.95:t=fill" % (plan["duration"], st["accent_hex"]))
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", str(base), "-i", plan["voice"]]
+        nxt = 2
         if plan.get("music"):
             cmd += ["-stream_loop", "-1", "-i", plan["music"]]
-            af = "[1:a]%s[v];[2:a]volume=%s[m];[v][m]amix=inputs=2:duration=first:normalize=0[a]" % (st["voice_loudnorm"], st["music_volume"])
+            af = "[1:a]%s[v];[%d:a]volume=%s[m];[v][m]amix=inputs=2:duration=first:normalize=0[a]" % (st["voice_loudnorm"], nxt, st["music_volume"])
+            nxt += 1
         else:
             af = "[1:a]%s[a]" % st["voice_loudnorm"]
-        cmd += ["-filter_complex", af, "-vf", ",".join(vfs), "-map", "0:v", "-map", "[a]",
+        chain = ["[0:v]" + ",".join(vfs) + "[v0]"]
+        last = "v0"
+        for n, ov in enumerate(plan.get("overlays", [])):  # cut-out graphics / screenshots, fade in at their start time
+            if not os.path.exists(ov["file"]):
+                continue
+            cmd += ["-loop", "1", "-framerate", str(FPS), "-t", "%.3f" % (ov["end"] + 1), "-i", ov["file"]]
+            w = ov.get("w", 360)
+            chain.append("[%d:v]format=rgba,scale=%d:-1,fade=t=in:st=0:d=0.18:alpha=1,setpts=PTS+%.3f/TB[o%d]" % (nxt, w, ov["start"], n))
+            chain.append("[%s][o%d]overlay=x=%s:y=%s:enable='between(t,%.3f,%.3f)'[v%d]" %
+                         (last, n, ov["x"], ov["y"], ov["start"], ov["end"], n + 1))
+            last = "v%d" % (n + 1)
+            nxt += 1
+        if st.get("end_fade"):
+            chain.append("[%s]fade=t=out:st=%.3f:d=%.3f[vout]" % (last, plan["duration"] - st["end_fade"], st["end_fade"]))
+            last = "vout"
+        cmd += ["-filter_complex", ";".join(chain + [af]), "-map", "[%s]" % last, "-map", "[a]",
                 "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "192k", "-t", "%.3f" % plan["duration"], "-movflags", "+faststart", str(out)]
         run(cmd)
@@ -325,6 +385,8 @@ def main():
         s.add_argument("--hook"); s.add_argument("--cta"); s.add_argument("--music")
         s.add_argument("--style"); s.add_argument("--lib"); s.add_argument("--clips-dir")
         s.add_argument("--no-face", action="store_true"); s.add_argument("--out")
+        s.add_argument("--overlay", action="append", default=[],
+                       help="cut-out graphic/screenshot: file:start:end:x:y:width (seconds, pixels). Repeatable")
     s = sub.add_parser("make"); common(s)
     s = sub.add_parser("plan"); common(s)
     s = sub.add_parser("transcribe"); s.add_argument("voice"); s.add_argument("--model", default="small")

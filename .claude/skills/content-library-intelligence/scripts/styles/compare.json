@@ -1,0 +1,56 @@
+{
+ "name": "compare",
+ "note": "Reference: two-column comparison (LOSE FAT vs BUILD MUSCLE) with cut-out food graphics around a talking head; fast pace, handle watermark, fade to black at end. Graphics are PNG cut-outs passed with --overlay.",
+ "width": 1080,
+ "height": 1920,
+ "fps": 30,
+ "min_shot": 1.5,
+ "max_shot": 3.0,
+ "punch_every": 0,
+ "punch_zoom": 1.1,
+ "grade": "eq=contrast=1.04:saturation=1.08",
+ "font": "Arial",
+ "caption_size": 70,
+ "caption_lines_words": 3,
+ "caption_color": "&H00FFFFFF",
+ "highlight_color": "&H001F5AFF",
+ "outline_color": "&H00000000",
+ "caption_outline": 7,
+ "caption_y": 1650,
+ "hook_size": 84,
+ "hook_seconds": 0,
+ "hook_y": 380,
+ "progress_bar": false,
+ "accent_hex": "FF5A1F",
+ "cta_seconds": 2.8,
+ "cta_size": 78,
+ "cta_y": 1500,
+ "voice_loudnorm": "loudnorm=I=-14:TP=-1.5:LRA=11",
+ "music_volume": 0.1,
+ "face_open_seconds": 99,
+ "face_close_seconds": 0,
+ "caption_mode": "phrase",
+ "caption_upper": true,
+ "watermark": {
+  "text": "@preski_fitness",
+  "x": 930,
+  "y": 560,
+  "size": 28
+ },
+ "end_fade": 1.2,
+ "label_size": 84,
+ "labels": [
+  {
+   "text": "LOSE\nFAT",
+   "color": "&H00F5A623",
+   "x": 270,
+   "y": 150
+  },
+  {
+   "text": "BUILD\nMUSCLE",
+   "color": "&H0022B3F5",
+   "x": 810,
+   "y": 150
+  }
+ ]
+}
