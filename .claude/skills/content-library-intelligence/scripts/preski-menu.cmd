@@ -58,8 +58,8 @@ echo   2  Where am I up to?       ^(counts, tagged, cloud-only^)
 echo   3  Scan my library         ^(indexes clips; safe to repeat^)
 echo   4  Overnight batch         ^(pulls 50 cloud clips, makes thumbnails, frees space^)
 echo   5  Find clips              ^(type a topic: "boxing", "lean", "talking head"^)
-echo   6  Collect SHOWCASE folder ^(your most impressive tagged clips^)
-echo   7  Collect a topic folder
+echo   6  Send SHOWCASE clips to my phone ^(most impressive, tagged^)
+echo   7  Send clips on a topic to my phone ^(e.g. talking head, jogging^)
 echo   8  Change photos folder
 echo   0  Exit
 echo.
