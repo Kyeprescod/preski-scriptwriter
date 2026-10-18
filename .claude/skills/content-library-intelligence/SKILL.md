@@ -57,6 +57,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Automatic tagging:** `scripts\preski-schedule-tagging.cmd` (run once) makes Windows run `preski-autotag.cmd` every 30 min while the laptop is on. Each run checks `pending` first, then `claude -p` tags 30 videos from contact sheets via `autotag-prompt.txt`; max 8 runs/day (240 clips); on any Claude error (e.g. usage limit) it pauses until the next day. Log: `<lib>\autotag.log`. Untested on Windows.
 
+**Clips on the phone (free, no cloud storage):** menu options 6/7 copy pulled clips into `<lib>\for-phone\<topic>`; option 9 runs `scripts\share_server.py`, a read-only mobile page served over home Wi-Fi with a private link. Open it on the phone, tap Download, Save to Photos. Laptop on + same Wi-Fi only; remote access would need e.g. Tailscale (not set up).
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):

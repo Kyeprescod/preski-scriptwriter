@@ -37,11 +37,11 @@ set "SRC="
 if exist "%SRCFILE%" set /p SRC=<"%SRCFILE%"
 if not defined SRC call :findsrc
 
-rem --- where pulled clips land so they appear on your phone (OneDrive app) ---
+rem --- where pulled clips land; option 9 shows this folder on your phone over home Wi-Fi (free, no cloud storage) ---
 set "PHONE="
 if exist "%LIB%\phone.txt" set /p PHONE=<"%LIB%\phone.txt"
 if not defined PHONE (
-  if defined OneDrive (set "PHONE=%OneDrive%\Preski Clips") else (set "PHONE=%USERPROFILE%\OneDrive\Preski Clips")
+  set "PHONE=%LIB%\for-phone"
 )
 
 :menu
@@ -61,10 +61,11 @@ echo   5  Find clips              ^(type a topic: "boxing", "lean", "talking hea
 echo   6  Send SHOWCASE clips to my phone ^(most impressive, tagged^)
 echo   7  Send clips on a topic to my phone ^(e.g. talking head, jogging^)
 echo   8  Change photos folder
+echo   9  OPEN CLIPS ON MY PHONE   ^(shows the link; phone must be on the same Wi-Fi^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
-echo   ^(open the OneDrive app on your phone, folder "Preski Clips", then Save to camera roll^)
+echo   ^(menu 9 gives a link: open it on your phone, tap a clip, Download, Save to Photos^)
 echo.
 echo   Tagging ^(talking-head, cardio, lean...^) is done by Claude in a LOCAL
 echo   session after step 3 or 4. Ask it: "tag the pending clips".
@@ -75,10 +76,17 @@ if "%C%"=="1" call :run doctor
 if "%C%"=="2" call :run report
 if "%C%"=="3" call :scan
 if "%C%"=="4" call :run harvest --limit 50 --max-mb 100
-if "%C%"=="5" call :find
+if "%C%"=="5" call :share
+echo.
+echo Leave this window open while you use your phone. Close it to stop sharing.
+%PY% "%HERE%share_server.py" "%PHONE%"
+exit /b 0
+
+:find
 if "%C%"=="6" call :run collect "impressive" --min-score 7 --name showcase --dest "%PHONE%\showcase"
 if "%C%"=="7" call :collect
 if "%C%"=="8" call :findsrc
+if "%C%"=="9" call :share
 if "%C%"=="0" exit /b 0
 echo.
 pause
