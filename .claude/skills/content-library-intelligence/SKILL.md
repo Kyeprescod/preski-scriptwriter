@@ -53,6 +53,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Easiest route on Windows:** double-click `scripts\preski-menu.cmd` (menu: health check, report, scan with the test-first gate, overnight harvest batch, search, collect showcase). It finds Python, installs Pillow/pillow-heif on first run and remembers the photos folder in `<lib>\source.txt`. Tagging itself is still done by Claude in a Local session.
 
+**Automatic nightly run:** after one successful menu scan, double-click `scripts\preski-schedule.cmd` once. Windows then runs `preski-nightly.cmd` at 02:00 (scan new clips + one harvest batch + report, logged to `<lib>\nightly.log`). Laptop must be on.
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):
