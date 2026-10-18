@@ -51,6 +51,8 @@ Search only knows clips that have been tagged, and tagging needs the file on the
 ## Windows + iCloud setup (Kye's machine: ASUS VivoBook, Windows; iPhone -> iCloud Photos)
 Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\Pictures\iCloud Photos\Photos`) and local folders -> `clil.py` -> `library.db`.
 
+**Easiest route on Windows:** double-click `scripts\preski-menu.cmd` (menu: health check, report, scan with the test-first gate, overnight harvest batch, search, collect showcase). It finds Python, installs Pillow/pillow-heif on first run and remembers the photos folder in `<lib>\source.txt`. Tagging itself is still done by Claude in a Local session.
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):
