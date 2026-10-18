@@ -37,6 +37,13 @@ set "SRC="
 if exist "%SRCFILE%" set /p SRC=<"%SRCFILE%"
 if not defined SRC call :findsrc
 
+rem --- where pulled clips land so they appear on your phone (OneDrive app) ---
+set "PHONE="
+if exist "%LIB%\phone.txt" set /p PHONE=<"%LIB%\phone.txt"
+if not defined PHONE (
+  if defined OneDrive (set "PHONE=%OneDrive%\Preski Clips") else (set "PHONE=%USERPROFILE%\OneDrive\Preski Clips")
+)
+
 :menu
 cls
 echo ==============================================
@@ -56,6 +63,9 @@ echo   7  Collect a topic folder
 echo   8  Change photos folder
 echo   0  Exit
 echo.
+echo   Phone folder  : %PHONE%
+echo   ^(open the OneDrive app on your phone, folder "Preski Clips", then Save to camera roll^)
+echo.
 echo   Tagging ^(talking-head, cardio, lean...^) is done by Claude in a LOCAL
 echo   session after step 3 or 4. Ask it: "tag the pending clips".
 echo.
@@ -66,7 +76,7 @@ if "%C%"=="2" call :run report
 if "%C%"=="3" call :scan
 if "%C%"=="4" call :run harvest --limit 50 --max-mb 100
 if "%C%"=="5" call :find
-if "%C%"=="6" call :run collect "impressive" --min-score 7 --name showcase
+if "%C%"=="6" call :run collect "impressive" --min-score 7 --name showcase --dest "%PHONE%\showcase"
 if "%C%"=="7" call :collect
 if "%C%"=="8" call :findsrc
 if "%C%"=="0" exit /b 0
@@ -102,7 +112,7 @@ exit /b 0
 :collect
 set "Q="
 set /p Q=Topic to collect?
-if defined Q call :run collect "%Q%" --limit 15
+if defined Q call :run collect "%Q%" --limit 15 --dest "%PHONE%\%Q%"
 exit /b 0
 
 :findsrc
