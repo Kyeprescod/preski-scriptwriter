@@ -76,13 +76,7 @@ if "%C%"=="1" call :run doctor
 if "%C%"=="2" call :run report
 if "%C%"=="3" call :scan
 if "%C%"=="4" call :run harvest --limit 50 --max-mb 100
-if "%C%"=="5" call :share
-echo.
-echo Leave this window open while you use your phone. Close it to stop sharing.
-%PY% "%HERE%share_server.py" "%PHONE%"
-exit /b 0
-
-:find
+if "%C%"=="5" call :find
 if "%C%"=="6" call :run collect "impressive" --min-score 7 --name showcase --dest "%PHONE%\showcase"
 if "%C%"=="7" call :collect
 if "%C%"=="8" call :findsrc
@@ -115,6 +109,12 @@ exit /b 0
 set "Q="
 set /p Q=What are you looking for?
 if defined Q call :run search "%Q%" --limit 10
+exit /b 0
+
+:share
+echo.
+echo Leave this window open while you use your phone. Close it to stop sharing.
+%PY% "%HERE%share_server.py" "%PHONE%"
 exit /b 0
 
 :collect
