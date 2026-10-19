@@ -74,6 +74,8 @@ def make_handler(root, key):
             files = [n for n in names if os.path.splitext(n)[1].lower() in VIDEO | IMAGE]
             href = lambda n: urllib.parse.quote("/" + (rel + "/" if rel else "") + n)
             out = ["<h1>Preski Clips%s</h1>" % (" / " + html.escape(rel) if rel else "")]
+            if not rel:
+                out.append('<p class="mut">iPhone: tap Download, then the arrow in Safari, open the file, tap Share, Save Video.</p>')
             if rel:
                 up = urllib.parse.quote("/" + os.path.dirname(rel))
                 out.append('<p><a href="%s%s">&larr; Back</a></p>' % (up, kq))

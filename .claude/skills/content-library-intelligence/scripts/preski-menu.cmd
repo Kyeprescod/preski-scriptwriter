@@ -126,6 +126,10 @@ set "CTA="
 set /p CTA=Call-to-action at the end, e.g. COMMENT ABS FOR THE FREE PLAN ^(Enter to skip^):
 set "SCR="
 set /p SCR=Script text file for exact captions ^(Enter to let Whisper listen^):
+set "STY="
+echo Style:  shred = fast big word-by-word captions ^| explainer = calm talking head + cutaways ^| compare = LOSE FAT / BUILD MUSCLE graphics
+set /p STY=Style ^(Enter = shred^):
+if not defined STY set "STY=shred"
 %PY% -c "import faster_whisper" >nul 2>nul
 if errorlevel 1 if not defined SCR (
   echo Installing the speech-to-text library once ^(a few minutes^)...
@@ -135,6 +139,7 @@ set "ARGS="
 if defined HOOK set ARGS=%ARGS% --hook "%HOOK%"
 if defined CTA set ARGS=%ARGS% --cta "%CTA%"
 if defined SCR set ARGS=%ARGS% --script "%SCR:"=%"
+set ARGS=%ARGS% --style %STY%
 %PY% "%HERE%editor.py" make "%V%" --lib "%LIB%" %ARGS% --out "%PHONE%\finished\video_%RANDOM%.mp4"
 echo.
 echo Finished videos are in %PHONE%\finished - open menu 9 to watch them on your phone.

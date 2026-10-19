@@ -42,7 +42,7 @@ set /a RUNS+=1
 >>"%LOG%" echo ===== %date% %time%  run !RUNS! of %MAXRUNS% today =====
 
 cd /d "%HERE%\..\..\..\.."
-claude -p "Read %HERE%autotag-prompt.txt and follow it. Python: %PY%. clil.py: %HERE%clil.py. Library: %LIB%. Autotag folder: %LIB%\autotag. Command prefix: %PY% %HERE%clil.py --lib %LIB%" --add-dir "%LIB%" --add-dir "%HERE%." --allowedTools "Bash" "Read" "Write" --max-turns 80 >>"%LOG%" 2>&1
+claude -p "Read %HERE%autotag-prompt.txt and follow it. Python: %PY%. clil.py: %HERE%clil.py. Library: %LIB%. Autotag folder: %LIB%\autotag. Command prefix: %PY% %HERE%clil.py --lib %LIB%" --add-dir "%LIB%" --add-dir "%HERE%." --allowedTools "Bash(*clil.py*)" "Read" "Write(%LIB%\autotag\*)" --max-turns 80 >>"%LOG%" 2>&1
 if errorlevel 1 (
   >>"%LOG%" echo [%date% %time%] Claude stopped with an error ^(often the plan's usage limit^). Pausing until tomorrow.
   >"%STATE%\paused_%TODAY%.txt" echo paused

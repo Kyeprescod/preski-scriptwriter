@@ -147,13 +147,14 @@ def find_clips(lib, text, limit=6):
 
 
 def parse_overlays(items):
+    """file:start:end:x:y:width  (split from the right so C:\\path\\file.png works)."""
     out = []
     for it in items or []:
-        f = it.rsplit(":", 5) if not re.match(r"^[A-Za-z]:[\\/]", it) else None
-        if f is None:  # Windows path with a drive letter: split from the right
-            f = it.rsplit(":", 5)
-        file, s, e, x, y, w = f
-        out.append({"file": file, "start": float(s), "end": float(e), "x": x, "y": y, "w": int(w)})
+        try:
+            file, st_, en, x, y, w = it.rsplit(":", 5)
+            out.append({"file": file, "start": float(st_), "end": float(en), "x": x, "y": y, "w": int(w)})
+        except ValueError:
+            raise SystemExit("Bad --overlay '%s'. Use file:start:end:x:y:width, e.g. egg.png:0.5:6:620:300:380" % it)
     return out
 
 
@@ -170,7 +171,8 @@ def plan_edit(a):
     face = has_video and not a.no_face
     for i, b in enumerate(beats):
         b["source"], b["clip"], b["clip_start"], b["asset_id"] = "clip", None, 0.0, None
-        if face and (b["start"] < st["face_open_seconds"] or b["end"] > duration - st["face_close_seconds"]):
+        mid = (b["start"] + b["end"]) / 2
+        if face and (mid < st["face_open_seconds"] or mid > duration - st["face_close_seconds"]):
             b["source"] = "face"
             continue
         cands = [c for c in find_clips(a.lib, b["text"]) if c["file_path"] not in used] if (a.lib or not pool) else []
