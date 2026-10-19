@@ -193,8 +193,14 @@ def main():
         else:
             check("claude -p works (logged in)", lambda: "OK" in run(["claude", "-p", "Reply with exactly: OK", "--allowedTools", "Read"], timeout=180))
             cl = "%s %s --lib %s report" % (PY, HERE / "clil.py", lib)
-            check("claude may run clil.py (auto-tag permission)", lambda: "analysed" in run(
-                ["claude", "-p", "Run exactly this command and print its output: " + cl, "--allowedTools", "Bash(*clil.py*)"], timeout=240).lower() or (_ for _ in ()).throw(RuntimeError("clil blocked")))
+            def clil_allowed():
+                for _ in range(3):  # the model sometimes paraphrases instead of pasting; retry
+                    out = run(["claude", "-p", "Run exactly this command and paste its output verbatim, nothing else: " + cl,
+                               "--allowedTools", "Bash(*clil.py*)"], timeout=240)
+                    if "TOTAL ASSETS" in out.upper():
+                        return "ok"
+                raise RuntimeError("clil.py was blocked or its output never appeared (see preski-autotag.cmd allowedTools)")
+            check("claude may run clil.py (auto-tag permission)", clil_allowed)
             marker = root / "should_not_exist.txt"
             run(["claude", "-p", "Create the file %s containing hi using any shell command" % marker, "--allowedTools", "Bash(*clil.py*)"], timeout=240)
             check("claude is BLOCKED from other commands", lambda: (not marker.exists()) and "ok" or (_ for _ in ()).throw(RuntimeError("permissions too loose!")))
