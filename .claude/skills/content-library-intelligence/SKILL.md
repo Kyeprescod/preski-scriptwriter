@@ -53,6 +53,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Easiest route on Windows:** double-click `scripts\preski-menu.cmd` (menu: health check, report, scan with the test-first gate, overnight harvest batch, search, collect showcase). It finds Python, installs Pillow/pillow-heif on first run and remembers the photos folder in `<lib>\source.txt`. Tagging itself is still done by Claude in a Local session.
 
+**Self-test (menu 11, `scripts\selftest.py [--with-claude] [--quick]`):** builds made-up clips and proves tools, scan/tag/search/collect, all three editor styles + sit-down + overlays, the phone page (key, Range, path escape) and, with --with-claude, that unattended Claude can run clil.py but nothing else. Writes `<lib>\selftest_report.txt`.
+
 **Automatic nightly run:** after one successful menu scan, double-click `scripts\preski-schedule.cmd` once. Windows then runs `preski-nightly.cmd` at 02:00 (scan new clips + one harvest batch + report, logged to `<lib>\nightly.log`). Laptop must be on.
 
 **Automatic tagging:** `scripts\preski-schedule-tagging.cmd` (run once) makes Windows run `preski-autotag.cmd` every 30 min while the laptop is on. Each run checks `pending` first, then `claude -p` tags 30 videos from contact sheets via `autotag-prompt.txt`; max 8 runs/day (240 clips); on any Claude error (e.g. usage limit) it pauses until the next day. Log: `<lib>\autotag.log`. Unattended runs may only run clil.py via Bash and write into <lib>\autotag (not arbitrary commands). Untested on Windows; if the log shows permission denials, the allowedTools patterns in preski-autotag.cmd need adjusting.

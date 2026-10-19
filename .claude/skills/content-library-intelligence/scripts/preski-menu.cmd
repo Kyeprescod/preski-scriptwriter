@@ -63,6 +63,7 @@ echo   7  Send clips on a topic to my phone ^(e.g. talking head, jogging^)
 echo   8  Change photos folder
 echo   9  OPEN CLIPS ON MY PHONE   ^(shows the link; phone must be on the same Wi-Fi^)
 echo  10  MAKE A VIDEO from my voiceover ^(uses my tagged clips, adds captions + graphics^)
+echo  11  SELF-TEST everything ^(2 min, made-up clips; proves it all works on this laptop^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -83,6 +84,7 @@ if "%C%"=="7" call :collect
 if "%C%"=="8" call :findsrc
 if "%C%"=="9" call :share
 if "%C%"=="10" call :make
+if "%C%"=="11" call :selftest
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -143,6 +145,14 @@ set ARGS=%ARGS% --style %STY%
 %PY% "%HERE%editor.py" make "%V%" --lib "%LIB%" %ARGS% --out "%PHONE%\finished\video_%RANDOM%.mp4"
 echo.
 echo Finished videos are in %PHONE%\finished - open menu 9 to watch them on your phone.
+exit /b 0
+
+:selftest
+echo.
+echo Running the full self-test with made-up clips. Your real footage is not touched.
+%PY% "%HERE%selftest.py" --with-claude
+echo.
+echo If anything says FAIL, copy the lines above and send them to Claude. A copy is saved in %LIB%\selftest_report.txt
 exit /b 0
 
 :share
