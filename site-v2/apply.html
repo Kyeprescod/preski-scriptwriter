@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en-GB"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#052148">
+<link rel="stylesheet" href="assets/css/fonts.css">
+<link rel="stylesheet" href="assets/css/site.css">
+<link rel="icon" href="assets/img/logo.jpg">
+<title>Apply for coaching | Preski Fitness</title>
+<meta name="description" content="Apply for online coaching with Kye at Preski Fitness.">
+</head><body>
+<header class="top"><div class="wrap"><a class="brand" href="./" aria-label="Preski Fitness home"><img src="assets/img/logo.jpg" alt=""><span>Preski Fitness</span></a><nav class="nav"><a class="btn btn-line" href="./">Back to site</a></nav></div></header>
+<main>
+<section class="page-head"><div class="wrap"><h1>Apply for coaching.</h1><p class="lede" style="margin-top:18px">Takes about two minutes. I read every application myself and reply by email.</p></div></section>
+<section class="sec"><div class="wrap">
+<form class="form" id="apply" name="coaching-application" method="POST" action="thanks.html" data-netlify="true" netlify-honeypot="bot-field" novalidate>
+  <input type="hidden" name="form-name" value="coaching-application">
+  <p class="hp"><label>Don't fill this in <input name="bot-field" tabindex="-1" autocomplete="off"></label></p>
+  <div><label for="name">Your name</label><input class="field" id="name" name="name" autocomplete="name" required></div>
+  <div><label for="email">Email</label><input class="field" id="email" name="email" type="email" autocomplete="email" inputmode="email" required></div>
+  <div><label for="insta">Instagram handle <span style="font-weight:400">(optional)</span></label><input class="field" id="insta" name="instagram" placeholder="@yourname"></div>
+  <div><label for="age">Age</label><input class="field" id="age" name="age" inputmode="numeric" required></div>
+  <div><label for="goal">Main goal</label>
+    <select class="field" id="goal" name="goal" required><option value="">Choose one</option><option>Lose fat</option><option>Build muscle</option><option>Both: get lean and muscular</option><option>Something else</option></select></div>
+  <div><label for="kit">What do you train with now?</label><p class="hint">Home, gym, dumbbells, pull-up bar, nothing yet. Be specific.</p><textarea class="field" id="kit" name="equipment" required></textarea></div>
+  <div><label for="health">Injuries or health conditions</label><p class="hint">Write "none" if there aren't any. This helps me keep your plan safe.</p><textarea class="field" id="health" name="health" required></textarea></div>
+  <div><label for="invest">Which option are you interested in?</label>
+    <select class="field" id="invest" name="option" required><option value="">Choose one</option><option>Monthly coaching</option><option>12-week transformation</option><option>Founding client rate (limited places)</option><option>Not sure yet</option></select></div>
+  <div><label for="why">Why now?</label><p class="hint">What has changed, and what will you do differently this time?</p><textarea class="field" id="why" name="why_now" required></textarea></div>
+  <div><label style="font-weight:400"><input type="checkbox" name="consent" value="yes" required> I agree to be contacted about my application. <a href="privacy.html">Privacy</a></label></div>
+  <p class="msg err" id="msg" role="alert" aria-live="assertive"></p>
+  <div><button class="btn btn-red" type="submit">Send my application</button></div>
+</form>
+</div></section>
+</main>
+<script src="assets/js/config.js"></script>
+<script>
+(function(){
+  var f=document.getElementById("apply"),msg=document.getElementById("msg"),C=window.PRESKI;
+  f.addEventListener("submit",function(e){
+    e.preventDefault(); msg.textContent="";
+    var missing=[];
+    f.querySelectorAll("[required]").forEach(function(el){
+      var ok=el.type==="checkbox"?el.checked:el.value.trim()!=="";
+      if(!ok){var l=f.querySelector('label[for="'+el.id+'"]'); missing.push(l?l.childNodes[0].textContent.trim():"the consent box");}
+    });
+    var em=f.email.value.trim();
+    if(em&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) missing.push("a valid email address");
+    if(missing.length){msg.textContent="Please complete: "+missing.join(", ")+".";return;}
+    var btn=f.querySelector("button[type=submit]"); btn.disabled=true; btn.textContent="Sending...";
+    var data=new URLSearchParams(new FormData(f)).toString();
+    try{var kd=new FormData();kd.append("email_address",em);fetch(C.kit.endpoint,{method:"POST",body:kd,mode:"no-cors"}).catch(function(){});}catch(_){}
+    fetch("/",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:data})
+      .then(function(r){if(!r.ok)throw new Error(r.status);location.href="thanks.html";})
+      .catch(function(){btn.disabled=false;btn.textContent="Send my application";msg.textContent="That didn't send. Check your connection and try again, or email "+C.contactEmail+".";});
+  });
+})();
+</script>
+</body></html>

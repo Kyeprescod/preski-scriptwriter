@@ -1,0 +1,34 @@
+import { chromium, devices } from 'playwright-core';
+const b = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args:['--no-sandbox'] });
+let fails=0; const ok=(n,c,x='')=>{console.log((c?'PASS ':'FAIL ')+n+(x?' - '+x:''));if(!c)fails++};
+const c = await b.newContext({...devices['iPhone 13']}); const p = await c.newPage();
+const kit=[], net=[];
+await c.route('https://app.kit.com/**', r=>{kit.push(r.request().url()+' '+(r.request().postData()||'').slice(0,200)); r.fulfill({status:200,body:'ok'})});
+await c.route('http://127.0.0.1:8811/', r=>{ if(r.request().method()==='POST'){net.push(r.request().postData()); r.fulfill({status:200,body:'ok'})} else r.continue() });
+await p.goto('http://127.0.0.1:8811/index.html#abs',{waitUntil:'networkidle'});
+ok('deep link #abs selects the abs guide', await p.$eval('#shelf button[data-k=abs]',e=>e.getAttribute('aria-pressed'))==='true');
+await p.goto('http://127.0.0.1:8811/index.html#kickstart',{waitUntil:'networkidle'});
+ok('deep link #kickstart', await p.$eval('#shelf button[data-k=kickstart]',e=>e.getAttribute('aria-pressed'))==='true');
+await p.fill('#email','nope'); await p.click('#signup button[type=submit]');
+ok('bad email gets a clear message', (await p.textContent('#msg')).includes('valid email'));
+await p.fill('#email','test@example.com'); await p.click('#signup button[type=submit]');
+await p.waitForSelector('#got.on');
+ok('Kit endpoint called with email_address', kit.length===1 && kit[0].includes('/forms/10064261/subscriptions'), kit[0]);
+const href=await p.getAttribute('#got a','href'); ok('guide download link shown', href==='guides/3-day-fat-loss-kickstart.pdf', href);
+const pdf=await p.request.get('http://127.0.0.1:8811/'+href); ok('PDF is served', pdf.status()===200 && (pdf.headers()['content-type']||'').includes('pdf'));
+ok('Book-a-call hidden when no bookingUrl', !(await p.isVisible('#book')));
+ok('shred button disabled when no checkout url', (await p.getAttribute('#shredBtn','aria-disabled'))==='true');
+ok('prices from config', (await p.textContent('#coaching')).includes('£250') && (await p.textContent('#coaching')).includes('£675') && (await p.textContent('#coaching')).includes('£150'));
+// apply form
+await p.goto('http://127.0.0.1:8811/apply.html',{waitUntil:'networkidle'});
+await p.click('#apply button[type=submit]');
+ok('apply names the missing fields', (await p.textContent('#msg')).includes('Your name'), await p.textContent('#msg'));
+await p.fill('#name','Test Lad'); await p.fill('#email','test@example.com'); await p.fill('#age','30'); await p.selectOption('#goal',{index:1});
+await p.fill('#kit','dumbbells'); await p.fill('#health','none'); await p.selectOption('#invest',{index:1}); await p.fill('#why','ready'); await p.check('input[name=consent]');
+await Promise.all([p.waitForURL('**/thanks.html'), p.click('#apply button[type=submit]')]);
+ok('application posted as a Netlify form then thanks page', net.length===1 && net[0].includes('form-name=coaching-application') && net[0].includes('name=Test+Lad'), (net[0]||'').slice(0,90));
+ok('applicant also sent to Kit', kit.length===2);
+// keyboard + focus
+await p.goto('http://127.0.0.1:8811/index.html',{waitUntil:'networkidle'});
+await p.keyboard.press('Tab'); ok('keyboard focus lands on a link', await p.evaluate(()=>document.activeElement.tagName==='A'));
+await b.close(); console.log(fails?`${fails} FAILED`:'ALL PASSED'); process.exit(fails?1:0);
