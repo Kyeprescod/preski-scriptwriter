@@ -181,6 +181,23 @@ def main():
         check("lists folders with key", lambda: b"finished" in get("/?k=" + key).read() or (_ for _ in ()).throw(RuntimeError("no listing")))
         some = next((fin).glob("*.mp4")).name
         check("video streams with Range (phone playback)", lambda: get("/finished/%s?k=%s" % (some, key), {"Range": "bytes=0-99"}).status == 206 and "ok")
+        def approvals():
+            items = json.loads(get("/api/items?k=" + key).read())["items"]
+            if not items:
+                raise RuntimeError("no finished videos listed")
+            req = urllib.request.Request(base + "/api/decide?k=" + key, method="POST", headers={"Content-Type": "application/json"},
+                                         data=json.dumps({"id": items[0]["id"], "status": "approved", "platforms": ["instagram"], "publish_at": "2026-10-24T12:30"}).encode())
+            rec = json.loads(opener.open(req, timeout=10).read())
+            bad = urllib.request.Request(base + "/api/decide", method="POST", data=b"{}")
+            try:
+                opener.open(bad, timeout=10)
+                raise RuntimeError("decision accepted without the key")
+            except urllib.error.HTTPError as e:
+                if e.code != 403:
+                    raise
+            saved = json.loads((root / "for-phone" / "approvals.json").read_text(encoding="utf-8"))
+            return "approved, saved" if rec["status"] == "approved" and saved else None
+        check("approval inbox lists videos and saves a decision", approvals)
         check("blocks path escape", lambda: get("/../../etc/hosts?k=" + key).code in (403, 404) and "ok")
     finally:
         proc.terminate()

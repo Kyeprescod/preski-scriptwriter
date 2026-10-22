@@ -376,6 +376,19 @@ def render(plan_path, out=None):
     return out
 
 
+def write_meta(a, plan_path, out):
+    """Sidecar the phone approval inbox reads: everything needed to decide and to post."""
+    plan = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+    caption = Path(a.caption_file).read_text(encoding="utf-8").strip() if a.caption_file else ""
+    meta = {"title": a.title or Path(out).stem.replace("_", " "), "hook": a.hook or "", "caption": caption,
+            "pinned_comment": a.pinned or "", "cta": a.cta or "", "style": plan["style"].get("name", ""),
+            "platforms": [x for x in a.platforms.split(",") if x], "publish_at": a.publish_at or "",
+            "duration": round(plan["duration"], 1),
+            "footage_gaps": [b["text"] for b in plan["beats"] if b["source"] == "card" or b.get("fallback")],
+            "asset_ids": [b["asset_id"] for b in plan["beats"] if b.get("asset_id")]}
+    Path(str(out) + ".meta.json").write_text(json.dumps(meta, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -387,6 +400,8 @@ def main():
         s.add_argument("--hook"); s.add_argument("--cta"); s.add_argument("--music")
         s.add_argument("--style"); s.add_argument("--lib"); s.add_argument("--clips-dir")
         s.add_argument("--no-face", action="store_true"); s.add_argument("--out")
+        s.add_argument("--title"); s.add_argument("--caption-file"); s.add_argument("--pinned")
+        s.add_argument("--platforms", default="instagram,tiktok,youtube"); s.add_argument("--publish-at", help="e.g. 2026-10-24T12:30")
         s.add_argument("--overlay", action="append", default=[],
                        help="cut-out graphic/screenshot: file:start:end:x:y:width (seconds, pixels). Repeatable")
     s = sub.add_parser("make"); common(s)
@@ -404,7 +419,8 @@ def main():
         render(a.plan, a.out)
     else:
         pp = plan_edit(a)
-        render(pp, a.out or str(pp).replace(".plan.json", ".mp4"))
+        out = render(pp, a.out or str(pp).replace(".plan.json", ".mp4"))
+        write_meta(a, pp, out)
 
 
 if __name__ == "__main__":

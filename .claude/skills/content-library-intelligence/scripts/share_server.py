@@ -6,9 +6,11 @@
 Prints a link containing a private key; open it on the phone (same Wi-Fi), tap a clip, then
 Download / Save to Photos. Only files inside <folder> are ever served.
 """
-import argparse, html, mimetypes, os, secrets, socket, sys, urllib.parse
+import argparse, html, json, mimetypes, os, secrets, socket, sys, threading, time, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
+LOCK = threading.Lock()
+STATUSES = {"approved", "changes", "rejected", "pending"}
 VIDEO = {".mp4", ".mov", ".m4v", ".webm"}
 IMAGE = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 
@@ -38,6 +40,106 @@ def lan_ip():
         s.close()
 
 
+def load_items(root):
+    """Finished videos (+ sidecar metadata + decision), newest first."""
+    fin = os.path.join(root, "finished")
+    try:
+        dec = json.load(open(os.path.join(root, "approvals.json"), encoding="utf-8"))
+    except (OSError, ValueError):
+        dec = {}
+    items = []
+    for dp, _, fns in os.walk(fin):
+        for fn in fns:
+            if os.path.splitext(fn)[1].lower() not in VIDEO:
+                continue
+            full = os.path.join(dp, fn)
+            rid = os.path.relpath(full, root).replace(os.sep, "/")
+            try:
+                meta = json.load(open(full + ".meta.json", encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+            d = dec.get(rid, {})
+            items.append({"id": rid, "name": fn, "mtime": os.path.getmtime(full), "title": meta.get("title") or fn,
+                          "hook": meta.get("hook", ""), "caption": meta.get("caption", ""), "pinned": meta.get("pinned_comment", ""),
+                          "gaps": meta.get("footage_gaps", []), "duration": meta.get("duration"),
+                          "platforms": d.get("platforms") or meta.get("platforms") or ["instagram", "tiktok", "youtube"],
+                          "publish_at": d.get("publish_at") or meta.get("publish_at", ""),
+                          "status": d.get("status", "pending"), "note": d.get("note", "")})
+    return sorted(items, key=lambda x: -x["mtime"])
+
+
+def save_decision(root, rid, body):
+    status = body.get("status")
+    if status not in STATUSES or rid not in {i["id"] for i in load_items(root)}:
+        return None
+    plats = [p for p in body.get("platforms", []) if p in ("instagram", "tiktok", "youtube")]
+    rec = {"status": status, "platforms": plats, "publish_at": str(body.get("publish_at", ""))[:25],
+           "note": str(body.get("note", ""))[:500], "decided_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    with LOCK:
+        path = os.path.join(root, "approvals.json")
+        try:
+            dec = json.load(open(path, encoding="utf-8"))
+        except (OSError, ValueError):
+            dec = {}
+        dec[rid] = rec
+        tmp = path + ".tmp"
+        json.dump(dec, open(tmp, "w", encoding="utf-8"), indent=1)
+        os.replace(tmp, path)
+    return rec
+
+
+APPROVE = """<!doctype html><html lang=en-GB><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Approve posts</title><style>
+:root{--ink:#052148;--red:#e1262d;--fog:#eef1f6;--ok:#0d7a3f}
+*{box-sizing:border-box}body{margin:0;background:var(--fog);color:var(--ink);font:16px/1.5 system-ui,-apple-system,sans-serif}
+header{background:var(--ink);color:#fff;padding:14px 16px;position:sticky;top:0;z-index:5}header h1{margin:0;font-size:20px}
+header a{color:#fff;font-size:14px}main{padding:14px;max-width:560px;margin:0 auto}
+.card{background:#fff;border-radius:8px;padding:12px;margin:0 0 16px;border-left:6px solid #9aa7c0}
+.card.approved{border-color:var(--ok)}.card.rejected{border-color:var(--red)}.card.changes{border-color:#d98a00}
+video{width:100%;border-radius:6px;background:#000;max-height:70vh}h2{font-size:18px;margin:10px 0 2px}
+.lbl{font-weight:700;font-size:13px;margin:12px 0 4px}.box{background:var(--fog);border-radius:6px;padding:10px;white-space:pre-wrap;font-size:15px}
+button,input,select,textarea{font:inherit}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.b{flex:1;min-height:48px;border:0;border-radius:6px;font-weight:700;color:#fff;background:var(--ink)}
+.b.go{background:var(--ok)}.b.no{background:var(--red)}.b.mid{background:#d98a00}.b.sm{flex:0;min-height:36px;padding:0 12px;font-size:14px}
+label.chip{display:inline-flex;gap:6px;align-items:center;padding:6px 10px;background:var(--fog);border-radius:20px;font-size:14px}
+input[type=datetime-local],textarea{width:100%;padding:10px;border:2px solid #d5dbe6;border-radius:6px}
+.tag{display:inline-block;font-weight:700;font-size:13px;padding:3px 8px;border-radius:4px;color:#fff;background:#9aa7c0}
+.tag.approved{background:var(--ok)}.tag.rejected{background:var(--red)}.tag.changes{background:#d98a00}
+.warn{color:#8a5a00;font-size:14px;margin:8px 0 0}.empty{text-align:center;color:#556;padding:40px 0}
+</style></head><body><header><h1>Approve posts</h1><a href="/?k=@@K@@">&larr; Clips and videos</a></header><main id=m><p class=empty>Loading...</p></main>
+<script>
+var K="@@K@@",m=document.getElementById("m");
+function api(p,o){return fetch(p+(p.indexOf("?")<0?"?":"&")+"k="+K,o).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})}
+function esc(s){var d=document.createElement("div");d.textContent=s==null?"":s;return d.innerHTML}
+function copy(t,btn){var ok=function(){var o=btn.textContent;btn.textContent="Copied";setTimeout(function(){btn.textContent=o},1200)};
+ if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(ok)}else{var a=document.createElement("textarea");a.value=t;a.style.position="fixed";a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand("copy");ok()}catch(e){}document.body.removeChild(a)}}
+function card(it){
+ var c=document.createElement("div");c.className="card "+it.status;
+ var pl=["instagram","tiktok","youtube"].map(function(p){return '<label class=chip><input type=checkbox value='+p+(it.platforms.indexOf(p)>-1?" checked":"")+'> '+p[0].toUpperCase()+p.slice(1)+'</label>'}).join(" ");
+ c.innerHTML='<span class="tag '+it.status+'">'+({pending:"Waiting for you",approved:"Approved",changes:"Needs changes",rejected:"Rejected"}[it.status])+'</span>'+
+ '<h2>'+esc(it.title)+'</h2><video controls playsinline preload=metadata src="/'+encodeURI(it.id)+'?k='+K+'#t=0.1"></video>'+
+ (it.gaps.length?'<p class=warn>Footage was missing for '+it.gaps.length+' line(s), so stand-ins were used.</p>':'')+
+ (it.hook?'<div class=lbl>On-screen hook</div><div class=box>'+esc(it.hook)+'</div><div class=row><button class="b sm" data-c=hook>Copy hook</button></div>':'')+
+ (it.caption?'<div class=lbl>Caption</div><div class=box>'+esc(it.caption)+'</div><div class=row><button class="b sm" data-c=caption>Copy caption</button></div>':'<p class=warn>No caption attached yet.</p>')+
+ (it.pinned?'<div class=lbl>Pinned comment</div><div class=box>'+esc(it.pinned)+'</div><div class=row><button class="b sm" data-c=pinned>Copy pinned comment</button></div>':'')+
+ '<div class=lbl>Post to</div><div class=row id=pl>'+pl+'</div><div class=lbl>Post at</div><input type=datetime-local class=when value="'+esc(it.publish_at)+'">'+
+ '<div class=lbl>Note to Claude (for changes)</div><textarea class=note rows=2>'+esc(it.note)+'</textarea>'+
+ '<div class=row><button class="b go" data-s=approved>Approve</button><button class="b mid" data-s=changes>Change</button><button class="b no" data-s=rejected>Reject</button></div>';
+ c.addEventListener("click",function(e){var b=e.target.closest("button");if(!b)return;
+  if(b.dataset.c){copy({hook:it.hook,caption:it.caption,pinned:it.pinned}[b.dataset.c],b);return}
+  var body={id:it.id,status:b.dataset.s,note:c.querySelector(".note").value,publish_at:c.querySelector(".when").value,
+   platforms:[].map.call(c.querySelectorAll(".chip input:checked"),function(x){return x.value})};
+  if(body.status==="changes"&&!body.note.trim()){alert("Write what to change in the note first.");return}
+  api("/api/decide",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}).then(function(){load()}).catch(function(){alert("That didn't save. Check the laptop is still on.")})});
+ return c}
+function load(){api("/api/items").then(function(d){m.innerHTML="";
+ if(!d.items.length){m.innerHTML='<p class=empty>No finished videos yet.<br>Make one from the laptop menu (option 10).</p>';return}
+ d.items.sort(function(a,b){return (a.status==="pending"?0:1)-(b.status==="pending"?0:1)});
+ d.items.forEach(function(it){m.appendChild(card(it))})}).catch(function(){m.innerHTML='<p class=empty>Could not reach the laptop.</p>'})}
+load();
+</script></body></html>"""
+
+
 def make_handler(root, key):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -58,6 +160,10 @@ def make_handler(root, key):
             q = urllib.parse.parse_qs(u.query)
             if q.get("k", [""])[0] != key:
                 return self.send(403, "Open the exact link shown on the laptop.")
+            if u.path == "/approve":
+                return self.send(200, APPROVE.replace("@@K@@", key))
+            if u.path == "/api/items":
+                return self.send(200, json.dumps({"items": load_items(root)}), "application/json")
             rel = urllib.parse.unquote(u.path).lstrip("/")
             full = os.path.realpath(os.path.join(root, rel))
             hidden = any(part.startswith(".") for part in rel.split("/") if part)
@@ -68,6 +174,20 @@ def make_handler(root, key):
                 return self.listing(full, rel, kq)
             return self.file(full, "dl" in q)
 
+        def do_POST(self):
+            u = urllib.parse.urlparse(self.path)
+            if urllib.parse.parse_qs(u.query).get("k", [""])[0] != key or u.path != "/api/decide":
+                return self.send(403, "No")
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(min(n, 20000)))
+            except (ValueError, TypeError):
+                return self.send(400, "Bad request")
+            rec = save_decision(root, str(body.get("id", "")), body)
+            if rec is None:
+                return self.send(400, json.dumps({"error": "unknown video or status"}), "application/json")
+            return self.send(200, json.dumps(rec), "application/json")
+
         def listing(self, full, rel, kq):
             names = sorted((n for n in os.listdir(full) if not n.startswith(".")), key=str.lower)
             dirs = [n for n in names if os.path.isdir(os.path.join(full, n))]
@@ -75,6 +195,7 @@ def make_handler(root, key):
             href = lambda n: urllib.parse.quote("/" + (rel + "/" if rel else "") + n)
             out = ["<h1>Preski Clips%s</h1>" % (" / " + html.escape(rel) if rel else "")]
             if not rel:
+                out.append('<p><a class="btn" style="display:block;text-align:center" href="/approve%s">Approve posts</a></p>' % kq)
                 out.append('<p class="mut">iPhone: tap Download, then the arrow in Safari, open the file, tap Share, Save Video.</p>')
             if rel:
                 up = urllib.parse.quote("/" + os.path.dirname(rel))
