@@ -66,6 +66,7 @@ echo  10  MAKE A VIDEO from my voiceover ^(uses my tagged clips, adds captions +
 echo  11  SELF-TEST everything ^(2 min, made-up clips; proves it all works on this laptop^)
 echo  12  TODAY'S PACK: load it and see what footage I have / what to film
 echo  13  EDIT TODAY'S VIDEOS ^(every video whose voiceover you have dropped in its folder^)
+echo  14  EXPORT MY BEST CLIPS + PHOTOS for the Daily Post ^(real video for the reel^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -89,6 +90,7 @@ if "%C%"=="10" call :make
 if "%C%"=="11" call :selftest
 if "%C%"=="12" call :pack
 if "%C%"=="13" call :packmake
+if "%C%"=="14" call :bank
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -168,6 +170,14 @@ exit /b 0
 :packmake
 echo.
 %PY% "%HERE%daily_pack.py" --lib "%LIB%" make
+exit /b 0
+
+:bank
+echo.
+echo Exporting your best tagged portrait clips and sharpest photos ^(metadata and GPS stripped^) to %LIB%\bank ...
+%PY% "%HERE%bank_export.py" --lib "%LIB%" --out "%LIB%\bank"
+echo.
+echo Then open a LOCAL Claude session and say: publish the bank in %LIB%\bank to the Daily Post artifact.
 exit /b 0
 
 :selftest
