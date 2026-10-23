@@ -141,6 +141,35 @@ def main():
     check("originals untouched", lambda: all((media / n).exists() for n in ("jog.mp4", "boxing.mp4", "press.mp4", "talk.mp4")) and "ok")
     check("report", lambda: "analysed" in clil(lib, "report").lower() or (_ for _ in ()).throw(RuntimeError("no report")))
 
+    def gemini_plumbing():
+        """Gemini tagger end to end against a tiny fake Gemini server (no key, no network, no cost)."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        answer = {"category": "cardio", "activity": "jogging", "description": "man jogging on a path", "tags": ["Jogging", "cardio!"],
+                  "talking_head": 0, "visual_quality_score": 7.2, "content_potential_score": 8, "hook_potential_score": 5}
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *x):
+                pass
+
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                body = json.dumps({"candidates": [{"content": {"parts": [{"text": json.dumps(answer)}]}}]}).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        srv = HTTPServer(("127.0.0.1", free_port()), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        glib = root / "glib"
+        clil(glib, "init"); clil(glib, "scan", media, "--skip-test")
+        env = dict(os.environ, GEMINI_API_KEY="test-key", GEMINI_API_BASE="http://127.0.0.1:%d" % srv.server_port)
+        r = subprocess.run([PY, str(HERE / "gemini_tagger.py"), "--lib", str(glib), "--limit", "10", "--rpm", "600"], env=env,
+                           capture_output=True, text=True, errors="replace")
+        srv.shutdown()
+        if r.returncode != 0 or "Gemini tagged 4" not in r.stdout:
+            raise RuntimeError((r.stdout + r.stderr)[-300:])
+        if "jogging" not in clil(glib, "search", "jogging", "--json"):
+            raise RuntimeError("tags saved but not searchable")
+        return "4 clips tagged via fake Gemini, searchable"
+    check("Gemini tagger: tags, saves, searchable", gemini_plumbing)
     pack = root / "pack.md"
     pack.write_text("## F1 - Jog and box\n**On-screen hook:** TEST HOOK\n**Teleprompter script:**\nGo for a jog. Hit the boxing bag.\n"
                     "**Long-form caption:**\nLine one.\nLine two.\n**Pinned comment:** Comment ABS please\n", encoding="utf-8")

@@ -57,6 +57,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Automatic nightly run:** after one successful menu scan, double-click `scripts\preski-schedule.cmd` once. Windows then runs `preski-nightly.cmd` at 02:00 (scan new clips + one harvest batch + report, logged to `<lib>\nightly.log`). Laptop must be on.
 
+**Gemini tagging (saves Claude usage):** `scripts/gemini_tagger.py` (menu 15; used automatically by the nightly tagger when GEMINI_API_KEY is set or in ~/.config/watch/.env) sends each contact sheet to Gemini (default gemini-3.5-flash, ~6 s per clip) with the same rubric and saves via `annotate`; 5% random sample listed in `<lib>\gemini_review.txt` for Claude to spot-check. Key never stored in the library or logs.
+
 **Automatic tagging:** `scripts\preski-schedule-tagging.cmd` (run once) makes Windows run `preski-autotag.cmd` every 30 min while the laptop is on. Each run checks `pending` first, then `claude -p` tags 30 videos from contact sheets via `autotag-prompt.txt`; max 8 runs/day (240 clips); on any Claude error (e.g. usage limit) it pauses until the next day. Log: `<lib>\autotag.log`. Unattended runs may only run clil.py via Bash and write into <lib>\autotag (not arbitrary commands). Untested on Windows; if the log shows permission denials, the allowedTools patterns in preski-autotag.cmd need adjusting.
 
 **Clips on the phone (free, no cloud storage):** menu options 6/7 copy pulled clips into `<lib>\for-phone\<topic>`; option 9 runs `scripts\share_server.py`, a read-only mobile page served over home Wi-Fi with a private link. Open it on the phone, tap Download, Save to Photos. Laptop on + same Wi-Fi only; remote access would need e.g. Tailscale (not set up).

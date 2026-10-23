@@ -8,6 +8,11 @@ set "LIB=%CLIL_LIB%"
 set "LOG=%LIB%\autotag.log"
 set "STATE=%LIB%\autotag_state"
 set "MAXRUNS=8"
+rem a Gemini key means tagging costs no Claude usage at all: allow many more runs a day
+set "USEG="
+if defined GEMINI_API_KEY set "USEG=1"
+if exist "%USERPROFILE%\.config\watch\.env" findstr /B /C:"GEMINI_API_KEY=" "%USERPROFILE%\.config\watch\.env" >nul 2>nul && set "USEG=1"
+if defined USEG set "MAXRUNS=48"
 if not exist "%STATE%" mkdir "%STATE%"
 if not exist "%LIB%\autotag" mkdir "%LIB%\autotag"
 set "PY=python"
@@ -26,6 +31,12 @@ if exist "%STATE%\runs_%TODAY%.txt" set /p RUNS=<"%STATE%\runs_%TODAY%.txt"
 if exist "%STATE%\paused_%TODAY%.txt" ( del "%STATE%\running.lock" & exit /b 0 )
 if !RUNS! GEQ %MAXRUNS% ( del "%STATE%\running.lock" & exit /b 0 )
 
+if defined USEG (
+  >>"%LOG%" echo [%date% %time%] Tagging with Gemini ^(no Claude usage^)
+  %PY% "%HERE%gemini_tagger.py" --lib "%LIB%" --limit 20 --max 40 >>"%LOG%" 2>&1
+  del "%STATE%\running.lock"
+  exit /b 0
+)
 where claude >nul 2>nul
 if errorlevel 1 (
   >>"%LOG%" echo [%date% %time%] Claude Code is not installed: run  irm https://claude.ai/install.ps1 ^| iex  in PowerShell, then  claude  once to sign in.

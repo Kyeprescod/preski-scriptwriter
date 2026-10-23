@@ -67,6 +67,7 @@ echo  11  SELF-TEST everything ^(2 min, made-up clips; proves it all works on th
 echo  12  TODAY'S PACK: load it and see what footage I have / what to film
 echo  13  EDIT TODAY'S VIDEOS ^(every video whose voiceover you have dropped in its folder^)
 echo  14  EXPORT MY BEST CLIPS + PHOTOS for the Daily Post ^(real video for the reel^)
+echo  15  TAG WITH GEMINI NOW ^(uses your Gemini key, not Claude^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -91,6 +92,7 @@ if "%C%"=="11" call :selftest
 if "%C%"=="12" call :pack
 if "%C%"=="13" call :packmake
 if "%C%"=="14" call :bank
+if "%C%"=="15" call :gemini
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -178,6 +180,13 @@ echo Exporting your best tagged portrait clips and sharpest photos ^(metadata an
 %PY% "%HERE%bank_export.py" --lib "%LIB%" --out "%LIB%\bank"
 echo.
 echo Then open a LOCAL Claude session and say: publish the bank in %LIB%\bank to the Daily Post artifact.
+exit /b 0
+
+:gemini
+echo.
+echo Tagging up to 60 clips with Gemini. If it says "No Gemini key found", run this once in PowerShell:
+echo     setx GEMINI_API_KEY "your-key"        then close everything and open a NEW window.
+%PY% "%HERE%gemini_tagger.py" --lib "%LIB%" --limit 20 --max 60
 exit /b 0
 
 :selftest
