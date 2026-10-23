@@ -210,7 +210,8 @@ def main():
 
     print("\n4. Phone page (share server)")
     port = free_port()
-    proc = subprocess.Popen([PY, str(HERE / "share_server.py"), str(root / "for-phone"), "--port", str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen([PY, str(HERE / "share_server.py"), str(root / "for-phone"), "--port", str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=dict(os.environ, CLIL_LIB=str(lib)))
     time.sleep(1.5)
     try:
         key = (root / "for-phone" / ".share_key").read_text().strip()
@@ -244,6 +245,21 @@ def main():
             saved = json.loads((root / "for-phone" / "approvals.json").read_text(encoding="utf-8"))
             return "approved, saved" if rec["status"] == "approved" and saved else None
         check("approval inbox lists videos and saves a decision", approvals)
+        def library_page():
+            st = json.loads(get("/api/status?k=" + key).read())
+            if not st.get("library") or "analysed" not in st or "gemini_key" not in st:
+                raise RuntimeError("status incomplete: %s" % list(st))
+            if b"Tag with Gemini" not in get("/library?k=" + key).read():
+                raise RuntimeError("library page missing")
+            bad = urllib.request.Request(base + "/api/tag", method="POST", data=b"{}")
+            try:
+                opener.open(bad, timeout=10)
+                raise RuntimeError("tagging started without the key")
+            except urllib.error.HTTPError as e:
+                if e.code != 403:
+                    raise
+            return "status + page ok, tagging needs the key"
+        check("library page: progress and Gemini tag button", library_page)
         check("blocks path escape", lambda: get("/../../etc/hosts?k=" + key).code in (403, 404) and "ok")
     finally:
         proc.terminate()

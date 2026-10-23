@@ -71,6 +71,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Daily pack <-> library (`scripts/daily_pack.py`, menu 12/13):** `import <pack.txt>` splits the text of a preski-daily-production-pack (video IDs F1/T1.., labelled sections) into `<lib>\\daily\\<date>\\<ID>_<slug>\\` (script.txt, caption.txt, pack.json) and writes `film-list.txt`: each script line is checked against tagged footage (OK + clip, or FILM). Kye records the voiceover / sit-down video and drops `voice.m4a|wav|mp3|mp4|mov` in that folder; `make` edits every video that has one (hook, caption, pinned comment and a COMMENT <KEYWORD> CTA taken from the pack) into `<lib>\\for-phone\\finished` for the approval inbox. `status` shows waiting / ready / edited. Never posts.
 
+**Phone control (Wi-Fi, laptop on):** `scripts\\preski-phone-autostart.cmd` (run once) starts `share_server.py` at every sign-in; the current link is saved in `<lib>\\phone-link.txt`. The phone page has Clips, Approve posts, and **Library**: tagged / waiting / iCloud-only / showcase counts with a progress bar and **Tag 40 / Tag 120** buttons that run `gemini_tagger.py` on the laptop (needs GEMINI_API_KEY there; one job at a time; key-protected; only fixed commands). Tagging itself never runs on the phone.
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):

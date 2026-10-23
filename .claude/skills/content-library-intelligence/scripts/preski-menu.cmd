@@ -61,7 +61,7 @@ echo   5  Find clips              ^(type a topic: "boxing", "lean", "talking hea
 echo   6  Send SHOWCASE clips to my phone ^(most impressive, tagged^)
 echo   7  Send clips on a topic to my phone ^(e.g. talking head, jogging^)
 echo   8  Change photos folder
-echo   9  PHONE PAGE: clips, finished videos and APPROVE POSTS ^(same Wi-Fi^)
+echo   9  PHONE PAGE: clips, videos, APPROVE POSTS, LIBRARY + GEMINI TAGGING ^(same Wi-Fi^)
 echo  10  MAKE A VIDEO from my voiceover ^(uses my tagged clips, adds captions + graphics^)
 echo  11  SELF-TEST everything ^(2 min, made-up clips; proves it all works on this laptop^)
 echo  12  TODAY'S PACK: load it and see what footage I have / what to film

@@ -6,7 +6,7 @@
 Prints a link containing a private key; open it on the phone (same Wi-Fi), tap a clip, then
 Download / Save to Photos. Only files inside <folder> are ever served.
 """
-import argparse, html, json, mimetypes, os, secrets, socket, sys, threading, time, urllib.parse
+import argparse, html, json, mimetypes, os, secrets, socket, sqlite3, subprocess, sys, threading, time, urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 LOCK = threading.Lock()
@@ -140,6 +140,112 @@ load();
 </script></body></html>"""
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+JOB = {"running": False, "started": None, "finished": None, "lines": [], "proc": None}
+
+
+def lib_for(root):
+    """The library folder: the folder that holds for-phone (or CLIL_LIB)."""
+    for c in (os.environ.get("CLIL_LIB"), os.path.dirname(root)):
+        if c and os.path.exists(os.path.join(c, "library.db")):
+            return c
+    return None
+
+
+def have_gemini_key():
+    if os.environ.get("GEMINI_API_KEY", "").strip():
+        return True
+    try:
+        return any(l.startswith("GEMINI_API_KEY=") and len(l.strip()) > 16
+                   for l in open(os.path.expanduser("~/.config/watch/.env"), encoding="utf-8"))
+    except OSError:
+        return False
+
+
+def library_status(root):
+    lib = lib_for(root)
+    out = {"library": bool(lib), "gemini_key": have_gemini_key(), "job": {k: JOB[k] for k in ("running", "started", "finished")},
+           "job_lines": JOB["lines"][-8:]}
+    if not lib:
+        return out
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % os.path.join(lib, "library.db").replace("\\", "/"), uri=True)
+        q = lambda sql: con.execute(sql).fetchone()[0]
+        out.update(analysed=q("SELECT COUNT(*) FROM assets WHERE status='analysed'"),
+                   waiting=q("SELECT COUNT(*) FROM assets WHERE status='probed'"),
+                   cloud_only=q("SELECT COUNT(*) FROM assets WHERE status='cloud_only'"),
+                   total=q("SELECT COUNT(*) FROM assets WHERE status NOT IN ('excluded','missing')"),
+                   showcase=q("SELECT COUNT(DISTINCT asset_id) FROM tags WHERE tag='showcase'"))
+        con.close()
+    except sqlite3.Error as e:
+        out["error"] = str(e)[:120]
+    try:
+        with open(os.path.join(lib, "autotag.log"), encoding="utf-8", errors="replace") as f:
+            out["log_tail"] = [l.strip() for l in f.readlines()[-5:]]
+    except OSError:
+        out["log_tail"] = []
+    return out
+
+
+def start_tagging(root, maxn):
+    lib = lib_for(root)
+    if not lib:
+        return {"error": "No library found next to this folder."}
+    if not have_gemini_key():
+        return {"error": "No Gemini key on the laptop yet. In PowerShell run: setx GEMINI_API_KEY \"your-key\" then restart the phone page."}
+    with LOCK:
+        if JOB["running"]:
+            return {"error": "Already tagging. Watch the progress below."}
+        JOB.update(running=True, started=time.strftime("%H:%M:%S"), finished=None, lines=[])
+    maxn = max(1, min(int(maxn or 40), 200))
+
+    def work():
+        try:
+            p = subprocess.Popen([sys.executable, os.path.join(HERE, "gemini_tagger.py"), "--lib", lib, "--limit", "20", "--max", str(maxn)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+            JOB["proc"] = p
+            for line in p.stdout:
+                JOB["lines"].append(line.strip()[:200])
+            p.wait()
+        finally:
+            JOB.update(running=False, finished=time.strftime("%H:%M:%S"), proc=None)
+    threading.Thread(target=work, daemon=True).start()
+    return {"started": True}
+
+
+LIBRARY = """<!doctype html><html lang=en-GB><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Library</title><style>
+:root{--ink:#052148;--red:#e1262d;--fog:#eef1f6;--ok:#0d7a3f}*{box-sizing:border-box}
+body{margin:0;background:var(--fog);color:var(--ink);font:16px/1.5 system-ui,-apple-system,sans-serif}
+header{background:var(--ink);color:#fff;padding:14px 16px}header h1{margin:0;font-size:20px}header a{color:#fff;font-size:14px}
+main{padding:14px;max-width:560px;margin:0 auto}.card{background:#fff;border-radius:10px;padding:14px;margin:0 0 14px}
+.big{font:800 44px/1 system-ui;margin:4px 0}.bar{height:14px;background:#d8dfeb;border-radius:7px;overflow:hidden;margin:8px 0}
+.bar i{display:block;height:100%;background:var(--ok);width:0}.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.b{flex:1;min-height:52px;border:0;border-radius:8px;background:var(--red);color:#fff;font-weight:700;font-size:16px}.b[disabled]{opacity:.5}
+.b.alt{background:var(--ink)}.mut{color:#566;font-size:14px}pre{white-space:pre-wrap;font:13px/1.4 ui-monospace,monospace;background:var(--fog);padding:10px;border-radius:6px;margin:8px 0 0}
+.stat{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center}.stat b{display:block;font-size:24px}
+</style></head><body><header><h1>Library</h1><a href="/?k=@@K@@">&larr; Clips and videos</a></header><main id=m><p class=mut>Loading...</p></main>
+<script>
+var K="@@K@@",m=document.getElementById("m"),busy=false;
+function api(p,o){return fetch(p+"?k="+K,o).then(function(r){return r.json()})}
+function esc(s){var d=document.createElement("div");d.textContent=s==null?"":s;return d.innerHTML}
+function draw(d){
+ if(!d.library){m.innerHTML='<div class=card>No library found on the laptop yet. Run the menu on the laptop first (option 3).</div>';return}
+ var tot=d.total||0,pct=tot?Math.round(100*d.analysed/tot):0,run=d.job.running;
+ m.innerHTML='<div class=card><div class=mut>Clips tagged</div><div class=big>'+d.analysed+' <span class=mut style="font-size:18px">of '+tot+'</span></div>'+
+ '<div class=bar><i style="width:'+pct+'%"></i></div><div class=stat><div><b>'+d.waiting+'</b>waiting</div><div><b>'+d.cloud_only+'</b>in iCloud only</div><div><b>'+d.showcase+'</b>showcase</div></div></div>'+
+ '<div class=card><b>Tag with Gemini</b><p class=mut style="margin:4px 0 0">Uses your Gemini key on the laptop. No Claude usage. The laptop must stay on.'+(d.gemini_key?'':' <b style="color:#b00">No key found on the laptop yet.</b>')+'</p>'+
+ '<div class=row><button class=b id=t40'+(run||!d.gemini_key?' disabled':'')+'>'+(run?'Tagging...':'Tag 40 clips')+'</button><button class="b alt" id=t120'+(run||!d.gemini_key?' disabled':'')+'>Tag 120</button></div>'+
+ (d.job.started?'<p class=mut>'+(run?'Started '+d.job.started+'. Updates every few seconds.':'Last run '+d.job.started+' to '+(d.job.finished||'?'))+'</p>':'')+
+ (d.job_lines.length?'<pre>'+esc(d.job_lines.join("\\n"))+'</pre>':'')+'</div>'+
+ (d.log_tail&&d.log_tail.length?'<div class=card><b>Overnight tagger log</b><pre>'+esc(d.log_tail.join("\\n"))+'</pre></div>':'');
+ [["t40",40],["t120",120]].forEach(function(x){var b=document.getElementById(x[0]);if(b)b.onclick=function(){go(x[1])}})}
+function go(n){api("/api/tag",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({max:n})}).then(function(r){if(r.error)alert(r.error);load()})}
+function load(){api("/api/status").then(draw).catch(function(){m.innerHTML='<div class=card>Could not reach the laptop.</div>'})}
+load();setInterval(load,4000);
+</script></body></html>"""
+
+
 def make_handler(root, key):
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -162,6 +268,10 @@ def make_handler(root, key):
                 return self.send(403, "Open the exact link shown on the laptop.")
             if u.path == "/approve":
                 return self.send(200, APPROVE.replace("@@K@@", key))
+            if u.path == "/library":
+                return self.send(200, LIBRARY.replace("@@K@@", key))
+            if u.path == "/api/status":
+                return self.send(200, json.dumps(library_status(root)), "application/json")
             if u.path == "/api/items":
                 return self.send(200, json.dumps({"items": load_items(root)}), "application/json")
             rel = urllib.parse.unquote(u.path).lstrip("/")
@@ -176,13 +286,15 @@ def make_handler(root, key):
 
         def do_POST(self):
             u = urllib.parse.urlparse(self.path)
-            if urllib.parse.parse_qs(u.query).get("k", [""])[0] != key or u.path != "/api/decide":
+            if urllib.parse.parse_qs(u.query).get("k", [""])[0] != key or u.path not in ("/api/decide", "/api/tag"):
                 return self.send(403, "No")
             try:
                 n = int(self.headers.get("Content-Length", "0"))
                 body = json.loads(self.rfile.read(min(n, 20000)))
             except (ValueError, TypeError):
                 return self.send(400, "Bad request")
+            if u.path == "/api/tag":
+                return self.send(200, json.dumps(start_tagging(root, body.get("max"))), "application/json")
             rec = save_decision(root, str(body.get("id", "")), body)
             if rec is None:
                 return self.send(400, json.dumps({"error": "unknown video or status"}), "application/json")
@@ -196,6 +308,7 @@ def make_handler(root, key):
             out = ["<h1>Preski Clips%s</h1>" % (" / " + html.escape(rel) if rel else "")]
             if not rel:
                 out.append('<p><a class="btn" style="display:block;text-align:center" href="/approve%s">Approve posts</a></p>' % kq)
+                out.append('<p><a class="btn" style="display:block;text-align:center" href="/library%s">Library and tagging</a></p>' % kq)
                 out.append('<p class="mut">iPhone: tap Download, then the arrow in Safari, open the file, tap Share, Save Video.</p>')
             if rel:
                 up = urllib.parse.quote("/" + os.path.dirname(rel))
@@ -265,7 +378,13 @@ def main():
     key = open(keyfile).read().strip() if os.path.exists(keyfile) else secrets.token_urlsafe(9)
     open(keyfile, "w").write(key)
     srv = ThreadingHTTPServer(("0.0.0.0", a.port), make_handler(root, key))
-    print("\nOpen this on your phone (same Wi-Fi as this laptop):\n\n    http://%s:%d/?k=%s\n" % (lan_ip(), a.port, key))
+    link = "http://%s:%d/?k=%s" % (lan_ip(), a.port, key)
+    print("\nOpen this on your phone (same Wi-Fi as this laptop):\n\n    %s\n" % link)
+    try:  # keep the latest link where you can find it again
+        with open(os.path.join(os.path.dirname(root), "phone-link.txt"), "w", encoding="utf-8") as f:
+            f.write(link + "\n")
+    except OSError:
+        pass
     print("Serving: %s\nLeave this window open. Press Ctrl+C to stop." % root)
     try:
         srv.serve_forever()
