@@ -1,0 +1,56 @@
+{
+ "date": "2026-10-21",
+ "series": "Road to 10K · King Shredder",
+ "topic": "Why most cuts stall around week 8 (and what to check first)",
+ "goal": "TRUST",
+ "hook_trigger": "FEAR",
+ "hooks_considered": {
+  "SURPRISE": "Your body burns LESS the leaner you get.",
+  "FEAR": "Most cuts STALL around week 8. Here's why.",
+  "EGO": "If your cut stalled, you're not lazy. It's maths.",
+  "URGENCY": "Stalled? DON'T cut more food yet.",
+  "DESIRE": "10 WEEKS into my cut at home. Here's how to keep it moving."
+ },
+ "keyword": "SHRED",
+ "offer": "my free Home Shred Blueprint",
+ "hook": "Most cuts STALL around week 8. Here's WHY 📉",
+ "slides": [
+  {"type": "cover", "photo": "cut-2026-10-17-arms-crossed-bed.jpg", "eyebrow": "10 weeks into my cut", "title": ["YOUR CUT", "STALLS HERE"], "sub": "Same food, smaller deficit.\nThe maths nobody shows you."},
+  {"type": "compare", "title": ["10 WEEKS IN", "SAME BEDROOM"], "left": {"photo": "cut-2026-08-07-front.jpg", "label": "7 Aug 2026"}, "right": {"photo": "cut-2026-10-18-mirror-front-abs.jpg", "label": "18 Oct 2026"}, "note": "Two 12.5 kg dumbbells, a chair, a walking pad. No gym.\nBut the deeper you get, the harder it gets. Here's why."},
+  {"type": "text", "eyebrow": "Adaptive thermogenesis", "title": ["YOUR BODY", "GETS CHEAPER"], "body": "Lose weight and you burn less.\nA smaller body costs less to carry. You move less without noticing. And your body runs a bit more efficiently.\nNothing's broken. It's maths."},
+  {"type": "list", "title": ["THE MATHS", "WORKED EXAMPLE"], "rows": [["90 kg, eats 2,200 kcal", "-500/day"], ["5 kg lighter body", "-125"], ["Moving less (NEAT)", "-150"], ["Body runs leaner", "-75"], ["Same food, week 8", "-150/day"]], "note": "Rough example numbers. That 500 deficit has quietly become 150. You're not doing anything wrong. The target moved."},
+  {"type": "point", "n": "01", "title": ["NEAT IS THE", "HIDDEN ONE"], "body": "NEAT is everything that isn't training: walking, stairs, standing, fidgeting. On a cut it's the first thing to drop, and you don't feel it go. Know your real 7-day step average."},
+  {"type": "point", "n": "02", "title": ["CHECK THE", "SNEAKY STUFF"], "body": "Weigh oils, sauces and spreads for 3 days. One tablespoon of olive oil is about 120 kcal.\nAnd recalculate your maintenance every 4 to 5 kg you lose."},
+  {"type": "list", "title": ["DO THIS", "TODAY"], "rows": [["Check 7-day step average", "1 min"], ["Set a daily floor", "8-10k"], ["Walking pad or a walk", "30 min"], ["Flat 2-3 weeks of averages?", "+2,000 steps"], ["Or trim food", "100-150 kcal"]], "note": "One change at a time, not both. Don't slash 500 more. Protein stays 1.6-2.2 g per kg, and keep lifting with control."},
+  {"type": "cta", "photo": "hero-wide.jpg", "title": ["WANT THE", "FULL PLAN?"]}
+ ],
+ "story": {"photo": "cut-2025-07-18-garden-hands-behind-head.jpg", "eyebrow": "New post", "title": ["Cut gone", "quiet?"], "body": "Your 500 calorie deficit can shrink to 150 without you changing a thing. Swipe today's post."},
+ "caption": "Most cuts stall around week 8.\nAnd it's not because you're lazy.\n\nYou lose weight, so you burn less.\nA smaller body costs less to carry.\n\nYou also move less without noticing.\nFewer steps, less fidgeting, more sitting.\n\nThat's NEAT. It's the first thing to drop.\nAnd you don't feel it go.\n\nExample: 90 kg, eating 2,200.\nWeek 1 that's about a 500 calorie deficit.\n\n5 kg later, same food,\nit can be closer to 150.\n\nSo before you slash food,\ncheck your real 7-day step average.\n\nSet a floor, 8 to 10k a day.\nThat's exactly what a walking pad is for.\n\nWeigh your oils and sauces for 3 days.\nA tablespoon of olive oil is about 120 kcal.\n\nStill flat after 2 to 3 weeks of averages?\nAdd 2,000 steps OR trim 100-150 kcal. Not both.\n\nWhat's your daily step average right now?\nComment your number. No lying.\n\nSend this to the mate who's \"eating nothing\" and not losing.\n\nComment SHRED and I'll send you my free Home Shred Blueprint.\nFollow, subscribe and join my lives.",
+ "reel": {
+  "hook": "Most cuts STALL around week 8. Here's WHY",
+  "hook_secs": 3,
+  "scenes": [
+   {"photo": "cut-2026-10-17-arms-crossed-bed.jpg", "dur": 3.5, "caption": "WEEK 8 STALL", "vo": "Most cuts stall around week eight. Here's why."},
+   {"photo": "cut-2026-08-07-front.jpg", "dur": 3.5, "caption": "7 AUGUST", "vo": "Seventh of August. Start of this cut."},
+   {"photo": "cut-2026-10-18-mirror-front-abs.jpg", "dur": 4, "caption": "18 OCTOBER", "vo": "Eighteenth of October. Ten weeks in, all at home."},
+   {"clip": "exercise-dip-bar-knee-raises-2026-02-18-b.mp4", "start": 0.5, "dur": 5.5, "caption": "90 KG, 2,200 KCAL", "vo": "Say you start at ninety kilos, eating twenty-two hundred. That's a five hundred deficit."},
+   {"photo": "cut-2026-10-18-mirror-side-abs.jpg", "dur": 5.5, "caption": "LIGHTER BODY BURNS LESS", "vo": "Five kilos later, your lighter body burns about a hundred and twenty-five less."},
+   {"photo": "park-2026-08-12.jpg", "dur": 5, "caption": "NEAT DROPS TOO", "vo": "You move less without noticing. That's NEAT. Easily another hundred and fifty."},
+   {"photo": "home-2026-10-02-chicken-pan.jpg", "dur": 4.5, "caption": "500 BECOMES 150", "vo": "Same food. Your five hundred deficit is now about one fifty."},
+   {"clip": "exercise-l-sit-hold-2026-02-18-a.mp4", "start": 0.5, "dur": 4.5, "caption": "CHECK YOUR STEPS", "vo": "So don't slash food. Check your real seven-day step average first."},
+   {"photo": "cut-2025-07-24-kitchen-front.jpg", "dur": 5, "caption": "8-10K STEPS. WEIGH OILS", "vo": "Set a floor, eight to ten thousand. Weigh your oils for three days."},
+   {"photo": "cut-2026-08-22-garden.jpg", "dur": 6, "caption": "COMMENT YOUR STEPS", "vo": "Comment your step average. And send this to the mate who's eating nothing and not losing."}
+  ],
+  "end": {"photo": "cut-2026-10-17-arms-crossed-bed.jpg", "line": "BEFORE WEEK 8 GETS YOU", "dur": 6, "vo": "Comment SHRED for my free Home Shred Blueprint. Because most cuts stall around week eight."},
+  "sound": "low, steady lo-fi or minimal piano instrumental, kept quiet under your voice (the maths needs to be heard)"
+ },
+ "photo_choices": [
+  {"slot": "cover", "file": "cut-2026-10-17-arms-crossed-bed.jpg", "why": "newest strong physique shot, full shoulders and arms, face in frame, 100% crop opened and sharp (sharpness 454.8), not used in the last 7 posts"},
+  {"slot": "proof (slide 2)", "file": "cut-2026-08-07-front.jpg + cut-2026-10-18-mirror-front-abs.jpg", "why": "real dated pair from the current cut, both front-on in the same bedroom; honesty over flattery, labelled with capture dates"},
+  {"slot": "cta", "file": "hero-wide.jpg", "why": "leanest, most defined shot in the library and the wide frame suits the CTA box; 100% crop opened, slightly soft (sharpness 206.6) but fine at slide size; last used 12 Oct"},
+  {"slot": "story", "file": "cut-2025-07-18-garden-hands-behind-head.jpg", "why": "leanest full-length portrait with visible abs, sharpest in the abs group (sharpness 4288.0); used recently but no unused portrait is as defined"},
+  {"slot": "reel scenes", "file": "current-cut dated pair + 18 Oct side, park, chicken pan, 2025-07-24 kitchen, 2026-08-22 garden, two outdoor bar clips", "why": "sharp, no flags; kitchen front flex 2025-11-05 skipped (motion-blurred when opened on 18 Oct), weighted-vest clips skipped (talking to camera, not voiceover-safe), gym throwbacks skipped (other people in frame, wrong topic)"},
+  {"slot": "reel end card", "file": "cut-2026-10-17-arms-crossed-bed.jpg", "why": "same shot as the first scene so the end loops visually back into the hook"}
+ ],
+ "photo_exceptions": {}
+}

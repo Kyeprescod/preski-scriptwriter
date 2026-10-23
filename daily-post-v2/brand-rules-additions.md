@@ -1,0 +1,5 @@
+## Photo and clip picking: additions (set after the 22 Oct review)
+- Reject photos where a phone, mirror edge, mirror frame or reflection is visible; wide-angle selfie distortion; heavy noise or dim light; a pose where the physique is relaxed or the angle flatters less than another shot from the same period. (Proof slides and dated before/after pairs are the exception: real and labelled, honesty first.)
+- Cover, Story, CTA and end card: his sharpest, best-lit, most defined shot from the last 6 months that fits the topic. Check the 100% crop.
+- Reels are video first: at least 70% of the runtime must be real clips from clips/. Photos appear only as 1-1.5 s inserts (dated proof, a face or physique beat). Never use more than 3 still scenes. Never open and close the reel on the same photo unless the loop is the point.
+- Prefer clips tagged showcase or impressive, steady, sharp, Kye alone, portrait. If the bank has fewer than 6 usable clips, say so in the TEAM REPORT line so HQ and Photo Scout can request footage.
