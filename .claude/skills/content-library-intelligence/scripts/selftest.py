@@ -141,6 +141,23 @@ def main():
     check("originals untouched", lambda: all((media / n).exists() for n in ("jog.mp4", "boxing.mp4", "press.mp4", "talk.mp4")) and "ok")
     check("report", lambda: "analysed" in clil(lib, "report").lower() or (_ for _ in ()).throw(RuntimeError("no report")))
 
+    pack = root / "pack.md"
+    pack.write_text("## F1 - Jog and box\n**On-screen hook:** TEST HOOK\n**Teleprompter script:**\nGo for a jog. Hit the boxing bag.\n"
+                    "**Long-form caption:**\nLine one.\nLine two.\n**Pinned comment:** Comment ABS please\n", encoding="utf-8")
+    dp = [PY, str(HERE / "daily_pack.py"), "--lib", str(lib), "--date", "2026-01-01"]
+
+    def daily_pack():
+        out = run(dp + ["import", str(pack)])
+        vd = next((lib / "daily" / "2026-01-01").glob("F1_*"))
+        if "F1" not in out or not (vd / "film-list.txt").exists() or "OK" not in (vd / "film-list.txt").read_text(encoding="utf-8"):
+            raise RuntimeError("pack not split or not matched to footage")
+        shutil.copy(root / "voice.wav", vd / "voice.wav")
+        run(dp + ["make"])
+        done = list((lib / "for-phone" / "finished").glob("F1_*.mp4"))
+        if not done:
+            raise RuntimeError("no finished video from the pack")
+        return "pack -> footage check -> edited video"
+    check("daily pack: import, match footage, edit", daily_pack)
     if a.quick:
         return finish(root, a)
     print("\n3. Editor (every style, voiceover and sit-down)")

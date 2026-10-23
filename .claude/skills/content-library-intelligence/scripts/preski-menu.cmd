@@ -64,6 +64,8 @@ echo   8  Change photos folder
 echo   9  PHONE PAGE: clips, finished videos and APPROVE POSTS ^(same Wi-Fi^)
 echo  10  MAKE A VIDEO from my voiceover ^(uses my tagged clips, adds captions + graphics^)
 echo  11  SELF-TEST everything ^(2 min, made-up clips; proves it all works on this laptop^)
+echo  12  TODAY'S PACK: load it and see what footage I have / what to film
+echo  13  EDIT TODAY'S VIDEOS ^(every video whose voiceover you have dropped in its folder^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -85,6 +87,8 @@ if "%C%"=="8" call :findsrc
 if "%C%"=="9" call :share
 if "%C%"=="10" call :make
 if "%C%"=="11" call :selftest
+if "%C%"=="12" call :pack
+if "%C%"=="13" call :packmake
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -145,6 +149,25 @@ set ARGS=%ARGS% --style %STY%
 %PY% "%HERE%editor.py" make "%V%" --lib "%LIB%" %ARGS% --out "%PHONE%\finished\video_%RANDOM%.mp4"
 echo.
 echo Finished videos are in %PHONE%\finished - open menu 9 to watch them on your phone.
+exit /b 0
+
+:pack
+echo.
+echo Copy the whole daily pack into a text file ^(Notepad, save as pack.txt^), then drag that file into this window.
+set "PK="
+set /p PK=Pack file:
+if not defined PK exit /b 0
+set "PK=%PK:"=%"
+%PY% "%HERE%daily_pack.py" --lib "%LIB%" import "%PK%"
+echo.
+%PY% "%HERE%daily_pack.py" --lib "%LIB%" status
+echo.
+echo Folders are in %LIB%\daily\^(today's date^). Each has film-list.txt. Record, drop voice.m4a in the folder, then choose 13.
+exit /b 0
+
+:packmake
+echo.
+%PY% "%HERE%daily_pack.py" --lib "%LIB%" make
 exit /b 0
 
 :selftest
