@@ -11,6 +11,7 @@ if exist "%LIB%\venv\Scripts\python.exe" (set "PY=%LIB%\venv\Scripts\python.exe"
 set "SRC="
 if exist "%LIB%\source.txt" set /p SRC=<"%LIB%\source.txt"
 if not defined SRC set "SRC=%USERPROFILE%\Pictures\iCloud Photos\Photos"
+if not defined SRC if exist "%USERPROFILE%\iCloudPhotos\Photos" set "SRC=%USERPROFILE%\iCloudPhotos\Photos"
 if not exist "%LIB%\test_passed.json" (
   >>"%LOG%" echo [%date% %time%] SKIPPED: run preski-menu.cmd option 3 once first so the safe test can pass.
   exit /b 0

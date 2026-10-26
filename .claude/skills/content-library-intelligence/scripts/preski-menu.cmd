@@ -223,6 +223,7 @@ echo Looking for your photos...
 %PY% "%CLIL%" --lib "%LIB%" detect
 echo.
 set "SRC=%USERPROFILE%\Pictures\iCloud Photos\Photos"
+if exist "%USERPROFILE%\iCloudPhotos\Photos" set "SRC=%USERPROFILE%\iCloudPhotos\Photos"
 set "IN="
 set /p IN=Paste the photos folder, or just press Enter to use "%SRC%":
 if defined IN set "SRC=%IN:"=%"
