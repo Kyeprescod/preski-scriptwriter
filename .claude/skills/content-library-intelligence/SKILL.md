@@ -73,6 +73,8 @@ Pipeline: iPhone -> iCloud Photos -> iCloud for Windows folder (`%USERPROFILE%\P
 
 **Phone control (Wi-Fi, laptop on):** `scripts\\preski-phone-autostart.cmd` (run once) starts `share_server.py` at every sign-in; the current link is saved in `<lib>\\phone-link.txt`. The phone page has Clips, Approve posts, and **Library**: tagged / waiting / iCloud-only / showcase counts with a progress bar and **Tag 40 / Tag 120** buttons that run `gemini_tagger.py` on the laptop (needs GEMINI_API_KEY there; one job at a time; key-protected; only fixed commands). Tagging itself never runs on the phone.
 
+**All-night mode (`scripts/overnight.py`, `preski-overnight.cmd`, menu 16):** loops scan -> `harvest` a batch of iCloud-only clips (download, thumbnail, free) -> `gemini_tagger.py` batch, until `--hours` (default 8) or nothing is left; asks Windows not to sleep while it runs; logs to `<lib>\\overnight.log` (also shown as the log on the phone Library page). Untested on Windows (loop logic tested with a fake Gemini).
+
 One-time setup (PowerShell, from the cloned repo): `powershell -ExecutionPolicy Bypass -File .\.claude\skills\content-library-intelligence\scripts\setup_windows.ps1`. It installs Python/FFmpeg via winget if missing (re-run in a NEW window after each install), creates a venv with Pillow + pillow-heif, writes the launcher `%USERPROFILE%\preski-library\clil.cmd`, then runs `doctor` and `detect`.
 
 Then, with the launcher (`clil.cmd`):

@@ -68,6 +68,7 @@ echo  12  TODAY'S PACK: load it and see what footage I have / what to film
 echo  13  EDIT TODAY'S VIDEOS ^(every video whose voiceover you have dropped in its folder^)
 echo  14  EXPORT MY BEST CLIPS + PHOTOS for the Daily Post ^(real video for the reel^)
 echo  15  TAG WITH GEMINI NOW ^(uses your Gemini key, not Claude^)
+echo  16  ALL-NIGHT MODE ^(scan, pull iCloud clips, tag with Gemini until morning; keeps laptop awake^)
 echo   0  Exit
 echo.
 echo   Phone folder  : %PHONE%
@@ -93,6 +94,7 @@ if "%C%"=="12" call :pack
 if "%C%"=="13" call :packmake
 if "%C%"=="14" call :bank
 if "%C%"=="15" call :gemini
+if "%C%"=="16" call :overnight
 if "%C%"=="0" exit /b 0
 echo.
 pause
@@ -187,6 +189,12 @@ echo.
 echo Tagging up to 60 clips with Gemini. If it says "No Gemini key found", run this once in PowerShell:
 echo     setx GEMINI_API_KEY "your-key"        then close everything and open a NEW window.
 %PY% "%HERE%gemini_tagger.py" --lib "%LIB%" --limit 20 --max 60
+exit /b 0
+
+:overnight
+echo.
+echo All-night mode: leave the laptop plugged in. It stops by itself after 8 hours or when nothing is left.
+%PY% "%HERE%overnight.py" --lib "%LIB%" --hours 8
 exit /b 0
 
 :selftest
