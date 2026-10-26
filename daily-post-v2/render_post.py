@@ -168,11 +168,13 @@ def slide(sl, i, n, post):
                 + '<div><span class=swipe>Swipe</span></div></div></div>')
     if t == "compare":
         L, R = sl["left"], sl["right"]
+        chip_l = "<span class=chip>" + E(L["label"]) + "</span>"
+        chip_r = "<span class='chip hot'>" + E(R["label"]) + "</span>"
         badge = (f'<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--red);color:#fff;font-family:var(--H);font-weight:900;font-size:54px;padding:10px 22px;border-radius:10px;z-index:3;white-space:nowrap">{E(sl["badge"])}</div>' if sl.get("badge") else "")
         return (f'<div class="s deep" style="padding:150px 72px 110px;gap:32px">{top(i, n)}{T(sl["title"], 112)}'
                 '<div style="position:relative;display:grid;grid-template-columns:1fr 1fr;gap:12px;flex:1;min-height:0">'
-                f'{photo_div(L["photo"], L.get("focus", "50% 22%"), "border-radius:20px", f"<span class=chip>{E(L["label"])}</span>")}'
-                f'{photo_div(R["photo"], R.get("focus", "50% 22%"), "border-radius:20px", f"<span class=\'chip hot\'>{E(R["label"])}</span>")}{badge}</div>'
+                f'{photo_div(L["photo"], L.get("focus", "50% 22%"), "border-radius:20px", chip_l)}'
+                f'{photo_div(R["photo"], R.get("focus", "50% 22%"), "border-radius:20px", chip_r)}{badge}</div>'
                 + (f'<p class="body bd" style="font-size:34px;max-height:150px">{para(sl.get("note"))}</p>' if sl.get("note") else "")
                 + handle() + '</div>')
     if t in ("point", "text"):
