@@ -59,7 +59,8 @@ def counts(lib):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--lib"); ap.add_argument("--hours", type=float, default=8.0)
-    ap.add_argument("--harvest-batch", type=int, default=60); ap.add_argument("--max-mb", type=float, default=200)
+    ap.add_argument("--harvest-batch", type=int, default=30); ap.add_argument("--max-mb", type=float, default=120)
+    ap.add_argument("--parallel", type=int, default=6); ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--tag-batch", type=int, default=60); ap.add_argument("--no-harvest", action="store_true")
     ap.add_argument("--sources", nargs="*", default=[])
     ap.add_argument("--max-rounds", type=int, default=10000)
@@ -82,8 +83,11 @@ def main():
                 run([HERE / "clil.py", "--lib", lib, "scan"] + sources)
             if not a.no_harvest and before["cloud"]:
                 code, out = run([HERE / "clil.py", "--lib", lib, "harvest", "--type", "video", "--limit", a.harvest_batch,
-                                 "--max-mb", a.max_mb], timeout=max(300, int(end - time.time())))
-                log(lib, "round %d harvest: %s" % (rnd, (out.strip().splitlines() or ["no output"])[-1][:160]))
+                                 "--max-mb", a.max_mb, "--parallel", a.parallel, "--order", "small", "--timeout", a.timeout],
+                                timeout=max(300, int(end - time.time())))
+                lines = [l for l in out.strip().splitlines() if l.strip()]
+                summ = next((l for l in reversed(lines) if l.startswith("Harvested")), None) or (lines[-1] if lines else "no output")
+                log(lib, "round %d harvest: %s" % (rnd, summ[:200]))
             code, out = run([HERE / "gemini_tagger.py", "--lib", lib, "--limit", 20, "--max", a.tag_batch])
             last = (out.strip().splitlines() or ["no output"])[-1][:200]
             log(lib, "round %d tag: %s" % (rnd, last))

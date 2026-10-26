@@ -930,7 +930,10 @@ def cmd_harvest(a):
             args.append(val)
     q += " AND file_path LIKE ?"
     args.append((a.under.rstrip("\\/") + "%") if a.under else "%")
-    rows = con.execute(q + " ORDER BY date_modified DESC LIMIT ?", (*args, a.limit)).fetchall()
+    con.execute("CREATE TABLE IF NOT EXISTS harvest_fail (asset_id INTEGER PRIMARY KEY, n INTEGER, last TEXT)")
+    q += " AND asset_id NOT IN (SELECT asset_id FROM harvest_fail WHERE n>=2)"   # clips that failed twice are skipped, not retried all night
+    order = "size ASC" if getattr(a, "order", "recent") == "small" else "date_modified DESC"
+    rows = con.execute(q + f" ORDER BY {order} LIMIT ?", (*args, a.limit)).fetchall()
     if not rows:
         sys.exit("No untagged cloud-only clips match those filters.")
     total_gb = sum(r["size"] or 0 for r in rows) / 1e9
@@ -949,32 +952,48 @@ def cmd_harvest(a):
                  errors=0, skipped=0, excluded=0, thumbnails_created=0, error_reasons=Counter())
     done = failed = 0
     t0 = time.time()
+    par = max(1, getattr(a, "parallel", 1))
+    if biggest * par > free - a.reserve_gb:
+        par = max(1, int((free - a.reserve_gb) // max(biggest, 0.001)))
     try:
-        for i, r in enumerate(rows, 1):
-            pth = r["file_path"]
-            ok = False
-            try:
-                pin(pth, True)
-                if not wait_local([pth], a.timeout, label=f"clip {i}/{len(rows)}"):
-                    raise RuntimeError(f"did not finish downloading within {a.timeout}s")
-                st = os.stat(pth)
-                known = {os.path.normcase(pth): con.execute("SELECT * FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()}
-                index_file(con, known, pth, os.path.splitext(pth)[1].lower(), st, lib, stats, True)
-                ok = True
-            except Exception as e:
-                failed += 1
-                print(f"  FAILED Clip {r['asset_id']}: {str(e)[:100]}", file=sys.stderr)
-            finally:
+        for c0 in range(0, len(rows), par):
+            chunk = rows[c0:c0 + par]
+            pinned = []
+            for r in chunk:
                 try:
-                    pin(pth, False)                       # always give the space back
-                    con.execute("UPDATE assets SET availability='cloud_only' WHERE asset_id=?", (r["asset_id"],))
+                    pin(r["file_path"], True)
+                    pinned.append(r["file_path"])
                 except Exception as e:
-                    print(f"  WARNING: could not free {pth}: {str(e)[:80]}", file=sys.stderr)
-                con.commit()
-            done += ok
+                    print(f"  FAILED Clip {r['asset_id']}: {str(e)[:100]}", file=sys.stderr)
+            arrived = set(wait_local(pinned, a.timeout, label=f"clips {c0 + 1}-{c0 + len(chunk)}/{len(rows)}"))
+            for r in chunk:
+                pth = r["file_path"]
+                ok = False
+                try:
+                    if pth not in arrived:
+                        raise RuntimeError(f"did not finish downloading within {a.timeout}s")
+                    st = os.stat(pth)
+                    known = {os.path.normcase(pth): con.execute("SELECT * FROM assets WHERE asset_id=?", (r["asset_id"],)).fetchone()}
+                    index_file(con, known, pth, os.path.splitext(pth)[1].lower(), st, lib, stats, True)
+                    ok = True
+                    con.execute("DELETE FROM harvest_fail WHERE asset_id=?", (r["asset_id"],))
+                except Exception as e:
+                    failed += 1
+                    con.execute("INSERT INTO harvest_fail(asset_id,n,last) VALUES(?,1,?) ON CONFLICT(asset_id) DO UPDATE SET n=n+1,last=excluded.last",
+                                (r["asset_id"], str(e)[:80]))
+                    print(f"  FAILED Clip {r['asset_id']}: {str(e)[:100]}", file=sys.stderr)
+                finally:
+                    try:
+                        pin(pth, False)                       # always give the space back
+                        con.execute("UPDATE assets SET availability='cloud_only' WHERE asset_id=?", (r["asset_id"],))
+                    except Exception as e:
+                        print(f"  WARNING: could not free {pth}: {str(e)[:80]}", file=sys.stderr)
+                    con.commit()
+                done += ok
+            i = min(c0 + len(chunk), len(rows))
             el = time.time() - t0
             eta = el / i * (len(rows) - i)
-            print(f"  {i}/{len(rows)} harvested ({el / 60:.1f} min elapsed, ~{eta / 60:.0f} min left)", file=sys.stderr)
+            print(f"  {i}/{len(rows)} done ({el / 60:.1f} min elapsed, ~{eta / 60:.0f} min left; {done} ok, {failed} failed)", file=sys.stderr)
     except KeyboardInterrupt:
         print("\nStopped. Everything harvested so far is saved; run the same command to continue.")
     assign_sessions(con)
@@ -1493,6 +1512,8 @@ def main():
     s.add_argument("--since", help="YYYY-MM-DD"); s.add_argument("--until", help="YYYY-MM-DD")
     s.add_argument("--under", help="only files whose path starts with this folder")
     s.add_argument("--reserve-gb", type=float, default=30); s.add_argument("--timeout", type=int, default=600)
+    s.add_argument("--parallel", type=int, default=1, help="download this many clips at the same time (iCloud is often faster that way)")
+    s.add_argument("--order", choices=["recent", "small"], default="recent", help="small = smallest files first (most clips per hour)")
     s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_harvest)
     s = sub.add_parser("collect", help="copy the best tagged clips for a topic into one folder (+ manifest)")
     s.add_argument("query", nargs="?"); s.add_argument("--ids", nargs="+", type=int)
